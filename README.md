@@ -222,6 +222,11 @@ responsible for how you use it, including compliance with
 laws in your jurisdiction. Do **not** use it to redistribute, resell, or publicly
 share creators' paid content.
 
+This is a hobby project built rapidly with heavy AI assistance ("vibe coding") and
+has **not** been exhaustively tested or reviewed. It may contain bugs and behave in
+unexpected ways, including on platforms or configurations the author never tried.
+Back up anything you care about and use it at your own risk.
+
 The software is provided "as is", without warranty of any kind. The author accepts
 no liability for any misuse, account action, data loss, or other damages arising
 from its use. If you do not agree with these terms, do not use this software.
