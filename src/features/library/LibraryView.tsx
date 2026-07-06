@@ -1,0 +1,724 @@
+import { useEffect, useState, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
+import { useTranslation } from "../../lib/i18n";
+import {
+  getCreators,
+  getPosts,
+  getPostAssets,
+  toggleStarPost,
+  getDistinctTiersForCreator,
+} from "../../lib/db";
+import type { Creator, Post, Asset, SyncCheckpoint } from "../../types/db";
+import { Sidebar } from "./Sidebar";
+import { PostList } from "./PostList";
+import { ReadingView } from "./ReadingView";
+import { SettingsView } from "../settings/SettingsView";
+import { useTauriEvents } from "./hooks/useTauriEvents";
+import { loadSettings } from "../../lib/settings";
+import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
+import type { AppSettings } from "../../types/settings";
+import { DEFAULT_SETTINGS } from "../../types/settings";
+import { SettingsProvider, useSettings } from "../settings/SettingsContext";
+import { ResizeDivider } from "./ResizeDivider";
+import type { DatePreset } from "./FilterPanel";
+
+const MAX_ERROR_LENGTH = 80;
+
+interface LibraryPanesProps {
+  creators: (Creator & { post_count: number })[];
+  posts: Post[];
+  selectedCreatorId: string | null;
+  selectedPost: Post | null;
+  selectedPostAssets: Asset[];
+  searchQuery: string;
+  syncingPosts: boolean;
+  syncingCreatorId: string | null;
+  syncProgress: number;
+  syncTotal: number;
+  maxPosts: number;
+  syncMode: 'normal' | 'full';
+  incrementalSync: boolean;
+  syncingImagesCreatorId: string | null;
+  imageProgress: number;
+  imageTotal: number;
+  postCheckpoint: SyncCheckpoint | null;
+  isImagesPaused: boolean;
+  imagesDoneCount: number;
+  imageFailedCount: number;
+  clearingCreatorId: string | null;
+  showStarred: boolean;
+  syncingSubscriptions: boolean;
+  subscriptionSyncStatus: string;
+  onSyncSubscriptions: () => void;
+  tierFilter: number | null;
+  datePreset: DatePreset;
+  dateFrom: string | null;
+  dateTo: string | null;
+  distinctTiers: number[];
+  onSelectCreator: (id: string | null) => void;
+  onCreatorsUpdated: () => void;
+  onDeleteCreator: (id: string) => Promise<void>;
+  onOpenSettings: () => void;
+  onSelectStarred: () => void;
+  onSelectPost: (post: Post) => void;
+  onSyncPosts: () => void;
+  onClearData: () => Promise<void>;
+  onSyncImages: (enabledTypes?: string[]) => Promise<void>;
+  onSyncModeChange: (m: 'normal' | 'full') => void;
+  onIncrementalSyncChange: (v: boolean) => void;
+  onMaxPostsChange: (n: number) => void;
+  onSearch: (q: string) => void;
+  onPausePosts: () => void;
+  onCancelPosts: () => void;
+  onResumePosts: () => void;
+  onPauseImages: () => void;
+  onCancelImages: () => void;
+  onToggleStar: (post: Post, newStarred: boolean) => void;
+  onTierChange: (v: number | null) => void;
+  onDatePresetChange: (preset: DatePreset) => void;
+  onDateRangeChange: (from: string | null, to: string | null) => void;
+}
+
+function LibraryPanes({
+  creators, posts, selectedCreatorId, selectedPost, selectedPostAssets,
+  searchQuery, syncingPosts, syncingCreatorId, syncProgress, syncTotal,
+  maxPosts, syncMode, incrementalSync, syncingImagesCreatorId, imageProgress, imageTotal,
+  postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
+  syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
+  tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
+  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onSelectStarred,
+  onSelectPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
+  onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
+  onPauseImages, onCancelImages, onToggleStar,
+  onTierChange, onDatePresetChange, onDateRangeChange,
+}: LibraryPanesProps) {
+  const { settings, updateSettings } = useSettings();
+  const [sidebarWidth, setSidebarWidth] = useState(settings.sidebar_width);
+  const [postListWidth, setPostListWidth] = useState(settings.post_list_width);
+
+  useEffect(() => {
+    setSidebarWidth(settings.sidebar_width);
+    setPostListWidth(settings.post_list_width);
+  }, [settings.sidebar_width, settings.post_list_width]);
+
+  return (
+    <>
+      <div style={{ width: sidebarWidth, flexShrink: 0 }} className="h-full">
+        <Sidebar
+          creators={creators}
+          selectedCreatorId={selectedCreatorId}
+          onSelectCreator={onSelectCreator}
+          onCreatorsUpdated={onCreatorsUpdated}
+          onDeleteCreator={onDeleteCreator}
+          onOpenSettings={onOpenSettings}
+          showStarred={showStarred}
+          onSelectStarred={onSelectStarred}
+          syncingSubscriptions={syncingSubscriptions}
+          subscriptionSyncStatus={subscriptionSyncStatus}
+          onSyncSubscriptions={onSyncSubscriptions}
+          demoMode={settings.demo_mode}
+        />
+      </div>
+      <ResizeDivider
+        currentWidth={sidebarWidth}
+        min={160}
+        max={400}
+        onDrag={setSidebarWidth}
+        onCommit={w => updateSettings({ sidebar_width: w })}
+      />
+      <div style={{ width: postListWidth, flexShrink: 0 }} className="h-full">
+        <PostList
+          posts={posts}
+          searchQuery={searchQuery}
+          selectedPostId={selectedPost?.id || null}
+          selectedCreator={creators.find(c => c.id === selectedCreatorId)}
+          isSyncingPosts={syncingPosts && selectedCreatorId === syncingCreatorId}
+          syncProgress={syncProgress}
+          syncTotal={syncTotal}
+          maxPosts={maxPosts}
+          onMaxPostsChange={onMaxPostsChange}
+          onSearch={onSearch}
+          onSelectPost={onSelectPost}
+          onSyncPosts={onSyncPosts}
+          onClearData={onClearData}
+          isClearingData={clearingCreatorId === selectedCreatorId}
+          onSyncImages={async () => {
+            const dat = settings.downloadAssetTypes;
+            const enabledTypes: string[] = [];
+            if (dat?.images !== false) enabledTypes.push("image");
+            if (dat?.audio !== false) enabledTypes.push("audio");
+            if (dat?.attachments !== false) enabledTypes.push("file");
+            await onSyncImages(enabledTypes);
+          }}
+          isSyncingImages={syncingImagesCreatorId != null && syncingImagesCreatorId === selectedCreatorId}
+          imageProgress={imageProgress}
+          imageTotal={imageTotal}
+          syncMode={syncMode}
+          onSyncModeChange={onSyncModeChange}
+          incrementalSync={incrementalSync}
+          onIncrementalSyncChange={onIncrementalSyncChange}
+          onPausePosts={onPausePosts}
+          onCancelPosts={onCancelPosts}
+          onResumePosts={onResumePosts}
+          onPauseImages={onPauseImages}
+          onCancelImages={onCancelImages}
+          postCheckpoint={postCheckpoint}
+          isImagesPaused={isImagesPaused}
+          imagesDoneCount={imagesDoneCount}
+          imageFailedCount={imageFailedCount}
+          showStarred={showStarred}
+          onToggleStar={onToggleStar}
+          tierFilter={tierFilter}
+          datePreset={datePreset}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          distinctTiers={distinctTiers}
+          onTierChange={onTierChange}
+          onDatePresetChange={onDatePresetChange}
+          onDateRangeChange={onDateRangeChange}
+        />
+      </div>
+      <ResizeDivider
+        currentWidth={postListWidth}
+        min={240}
+        max={560}
+        onDrag={setPostListWidth}
+        onCommit={w => updateSettings({ post_list_width: w })}
+      />
+      <ReadingView
+        post={selectedPost}
+        assets={selectedPostAssets}
+        onToggleStar={onToggleStar}
+      />
+    </>
+  );
+}
+
+export function LibraryView() {
+  const [view, setView] = useState<'library' | 'settings'>('library');
+  const [initialSettings, setInitialSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [creators, setCreators] = useState<(Creator & { post_count: number })[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [selectedPostAssets, setSelectedPostAssets] = useState<Asset[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const t = useTranslation();
+  const [syncingPosts, setSyncingPosts] = useState(false);
+  const [syncingCreatorId, setSyncingCreatorId] = useState<string | null>(null);
+  const [syncingSubscriptions, setSyncingSubscriptions] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
+  const [migratingImages, setMigratingImages] = useState(false);
+  const [subscriptionSyncStatus, setSubscriptionSyncStatus] = useState<string>("");
+  const [clearingCreatorId, setClearingCreatorId] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState(0);
+  const [syncTotal, setSyncTotal] = useState(0);
+  const [maxPosts, setMaxPosts] = useState(9999);
+  const [syncingImagesCreatorId, setSyncingImagesCreatorId] = useState<string | null>(null);
+  const [imageProgress, setImageProgress] = useState(0);
+  const [imageTotal, setImageTotal] = useState(0);
+  const [syncMode, setSyncMode] = useState<'normal' | 'full'>('normal');
+  const [incrementalSync, setIncrementalSync] = useState(false);
+  const [postCheckpoint, setPostCheckpoint] = useState<SyncCheckpoint | null>(null);
+  const [isImagesPaused, setIsImagesPaused] = useState(false);
+  const [imagesDoneCount, setImagesDoneCount] = useState(0);
+  const [imageFailedCount, setImageFailedCount] = useState(0);
+  const isImagesPausedRef = useRef(false);
+  const prevCreatorIdRef = useRef<string | null>(null);
+  const demoModeInitialRender = useRef(true);
+  // Always mirrors the current demoMode value, so async load functions can
+  // re-check it after an await resolves — a plain closure over `demoMode`
+  // would still see whatever value was current when the function *started*,
+  // even if the mode changed while a real DB query was in flight (this is
+  // exactly what let React StrictMode's mount double-invoke slip a stale
+  // real-data fetch past the demoModeInitialRender guard below).
+  const demoModeRef = useRef(demoMode);
+  demoModeRef.current = demoMode;
+  const [showStarred, setShowStarred] = useState(false);
+  const [tierFilter, setTierFilter] = useState<number | null>(null);
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [dateFrom, setDateFrom] = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState<string | null>(null);
+  const [distinctTiers, setDistinctTiers] = useState<number[]>([]);
+
+  useEffect(() => {
+    async function init() {
+      try {
+        console.log("Database initialized for Phase 3.");
+        const settings = await loadSettings();
+        setInitialSettings(settings);
+        setDemoMode(settings.demo_mode);
+        setMaxPosts(settings.default_max_posts);
+        setSyncMode(settings.default_sync_mode as 'normal' | 'full');
+        // Apply theme immediately so there's no flash
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const isDark = settings.theme === 'dark' || (settings.theme === 'system' && prefersDark);
+        document.documentElement.classList.toggle('dark', isDark);
+        if (settings.demo_mode) {
+          setCreators(DEMO_CREATORS);
+        } else {
+          await loadCreators();
+          const account = await invoke('get_account_info');
+          if (account === null) {
+            setView('settings');
+          }
+        }
+      } catch (err) {
+        console.error("Failed to initialize database", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+  }, []);
+
+  useTauriEvents({
+    "patreon-logged-in": async () => {
+      console.log("Login detected. Reloading creators...");
+      await loadCreators();
+      handleSyncSubscriptions();
+    },
+    "sync-progress": (payload: { current: number; total: number }) => {
+      setSyncProgress(payload.current);
+      if (payload.total > 0) {
+        setSyncTotal(payload.total);
+      }
+    },
+    "sync-complete": async (payload: { creator_id: string }) => {
+      if (demoMode) return;
+      console.log("Sync complete event received. Refreshing posts...");
+      await loadCreators();
+      await loadPosts();
+      if (selectedCreatorId) {
+        getDistinctTiersForCreator(selectedCreatorId).then(setDistinctTiers).catch(console.error);
+      }
+      // Refresh checkpoint — deleted on natural completion, may exist on pause
+      // Note: Tauri command params must be camelCase (creatorId), but event payload
+      // fields come back as snake_case (creator_id) matching how Rust serialized them.
+      const cp = await invoke<SyncCheckpoint | null>('get_sync_checkpoint', { creatorId: payload.creator_id });
+      setPostCheckpoint(cp);
+    },
+    "image-download-progress": (payload: { current: number; total: number; creator_id: string }) => {
+      setImageProgress(payload.current);
+      if (payload.total > 0) setImageTotal(payload.total);
+    },
+    "image-migration-active": (active: boolean) => {
+      setMigratingImages(active);
+    },
+    "demo-mode-changed": (active: boolean) => {
+      setDemoMode(active);
+    },
+  });
+
+  useEffect(() => {
+    if (demoModeInitialRender.current) {
+      demoModeInitialRender.current = false;
+      return;
+    }
+    setSelectedCreatorId(null);
+    setSelectedPost(null);
+    loadCreators();
+    loadPosts();
+  }, [demoMode]);
+
+  useEffect(() => {
+    if (!loading) {
+      loadPosts().catch(console.error);
+      setSelectedPost(null);
+    }
+  }, [selectedCreatorId, searchQuery, loading, showStarred, tierFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    setTierFilter(null);
+    setDatePreset('all');
+    setDateFrom(null);
+    setDateTo(null);
+  }, [selectedCreatorId]);
+
+  useEffect(() => {
+    if (!selectedCreatorId) { setDistinctTiers([]); return; }
+    getDistinctTiersForCreator(selectedCreatorId).then(setDistinctTiers).catch(console.error);
+  }, [selectedCreatorId]);
+
+  // Fetch sync checkpoint when creator changes
+  useEffect(() => {
+    if (selectedCreatorId) {
+      invoke<SyncCheckpoint | null>('get_sync_checkpoint', { creatorId: selectedCreatorId })
+        .then(cp => setPostCheckpoint(cp))
+        .catch(console.error);
+    } else {
+      setPostCheckpoint(null);
+    }
+  }, [selectedCreatorId]);
+
+  useEffect(() => {
+    if (selectedPost) {
+      loadAssets(selectedPost.id);
+    } else {
+      setSelectedPostAssets([]);
+    }
+  }, [selectedPost]);
+
+  const handleDeleteCreator = async (id: string) => {
+    if (demoMode) return;
+    try {
+      // Cancel any in-flight image download for this creator before deleting.
+      if (syncingImagesCreatorId === id) {
+        await invoke('cancel_image_download').catch(() => {});
+        setSyncingImagesCreatorId(null);
+        setImageProgress(0);
+        setImageTotal(0);
+        setImagesDoneCount(0);
+        setImageFailedCount(0);
+        isImagesPausedRef.current = false;
+        setIsImagesPaused(false);
+      }
+      await invoke("delete_creator", { creatorId: id });
+      if (selectedCreatorId === id) {
+        setSelectedCreatorId(null);
+        setSelectedPost(null);
+        setImageFailedCount(0);
+      }
+      await loadCreators();
+    } catch (e) {
+      console.error("Failed to delete creator:", e);
+      throw e;
+    }
+  };
+
+  const handleTierChange = (v: number | null) => setTierFilter(v);
+  const handleDatePresetChange = (preset: DatePreset) => setDatePreset(preset);
+  const handleDateRangeChange = (from: string | null, to: string | null) => {
+    setDateFrom(from);
+    setDateTo(to);
+  };
+
+  const handleClearData = async () => {
+    if (demoMode || !selectedCreatorId || clearingCreatorId) return;
+    setClearingCreatorId(selectedCreatorId);
+    try {
+      await invoke("clear_creator_data", { creatorId: selectedCreatorId });
+      setSelectedPost(null);
+      setPostCheckpoint(null);
+      await loadPosts();
+      await loadCreators();
+    } catch (e) {
+      console.error("Failed to clear creator data:", e);
+      throw e;
+    } finally {
+      setClearingCreatorId(null);
+    }
+  };
+
+  // handleSyncImages must be defined before handleSyncPosts (Full mode auto-trigger)
+  const handleSyncImages = async (enabledTypes?: string[]) => {
+    if (demoMode || !selectedCreatorId || syncingImagesCreatorId || migratingImages) return;
+    // Reset paused state for a fresh download
+    isImagesPausedRef.current = false;
+    setIsImagesPaused(false);
+    setImagesDoneCount(0);
+    setImageFailedCount(0);
+    setSyncingImagesCreatorId(selectedCreatorId);
+    setImageProgress(0);
+    setImageTotal(0);
+    try {
+      const result = await invoke<{ success: number; failed: number }>(
+        'download_creator_images',
+        { creatorId: selectedCreatorId, enabledTypes: enabledTypes ?? null }
+      );
+      setImageFailedCount(result.failed);
+      await loadPosts();
+      await loadCreators();
+      if (selectedPost) {
+        await loadAssets(selectedPost.id);
+      }
+    } catch (e) {
+      console.error('Failed to download images:', e);
+      throw e;
+    } finally {
+      setSyncingImagesCreatorId(null);
+      // Only reset progress display if not paused (paused = keep count for resume button)
+      if (!isImagesPausedRef.current) {
+        setImageProgress(0);
+        setImageTotal(0);
+      }
+    }
+  };
+
+  const handleSyncPosts = async () => {
+    if (demoMode) return;
+    if (!selectedCreatorId || syncingPosts) return;
+    const creator = creators.find(c => c.id === selectedCreatorId);
+    if (!creator?.profile_url) return;
+
+    setSyncingPosts(true);
+    setSyncingCreatorId(selectedCreatorId);
+    setSyncProgress(0);
+    setSyncTotal(0);
+    try {
+      await invoke<number>('scrape_creator_posts', {
+        creatorUrl: creator.profile_url,
+        creatorId: creator.id,
+        maxPosts: maxPosts,
+        mode: syncMode,
+        resumeCursor: null,
+        incremental: incrementalSync,
+      });
+      await loadPosts();
+      await loadCreators();
+      // Full mode: always auto-trigger images after sync batch completes.
+      // Don't gate on checkpoint: with small maxPosts a checkpoint always exists, but
+      // user still expects the current batch's images to download automatically.
+      if (syncMode === 'full') {
+        await handleSyncImages();
+      }
+    } catch (e) {
+      console.error('Failed to sync posts:', e);
+    } finally {
+      setSyncingPosts(false);
+      setSyncingCreatorId(null);
+      setSyncProgress(0);
+      setSyncTotal(0);
+    }
+  };
+
+  const handlePausePosts = async () => {
+    await invoke('close_post_sync_window');
+    // scrape_creator_posts unblocks and emits sync-complete, which refreshes the checkpoint
+  };
+
+  const handleCancelPosts = async () => {
+    if (demoMode || !selectedCreatorId) return;
+    // Clear DB first so sync-complete handler finds nothing
+    await invoke('clear_sync_checkpoint', { creatorId: selectedCreatorId });
+    setPostCheckpoint(null);
+    // Only close the window if a sync is actively running — avoid writing stale signal
+    // into ScrapedPostsRawState when no polling loop is active (e.g., paused state)
+    if (syncingPosts) {
+      await invoke('close_post_sync_window');
+    }
+  };
+
+  const handleResumePosts = async () => {
+    if (demoMode || !selectedCreatorId || !postCheckpoint || syncingPosts) return;
+    const creator = creators.find(c => c.id === selectedCreatorId);
+    if (!creator?.profile_url) return;
+
+    setSyncingPosts(true);
+    setSyncingCreatorId(selectedCreatorId);
+    setSyncProgress(postCheckpoint.posts_done);
+    setSyncTotal(0);
+    try {
+      await invoke<number>('scrape_creator_posts', {
+        creatorUrl: creator.profile_url,
+        creatorId: creator.id,
+        maxPosts: maxPosts,
+        mode: postCheckpoint.mode,
+        resumeCursor: postCheckpoint.cursor,
+      });
+      await loadPosts();
+      await loadCreators();
+      if (syncMode === 'full') {
+        await handleSyncImages();
+      }
+    } catch (e) {
+      console.error('Failed to resume posts:', e);
+    } finally {
+      setSyncingPosts(false);
+      setSyncingCreatorId(null);
+      setSyncProgress(0);
+      setSyncTotal(0);
+    }
+  };
+
+  const handlePauseImages = async () => {
+    // Capture progress synchronously before the finally block resets it
+    isImagesPausedRef.current = true;
+    setImagesDoneCount(imageProgress);
+    setIsImagesPaused(true);
+    await invoke('cancel_image_download');
+  };
+
+  const handleCancelImages = async () => {
+    isImagesPausedRef.current = false;
+    setIsImagesPaused(false);
+    setImagesDoneCount(0);
+    await invoke('cancel_image_download');
+  };
+
+  const handleSelectCreator = (id: string | null) => {
+    setSelectedCreatorId(id);
+    setSearchQuery("");
+    setShowStarred(false);
+    setImageFailedCount(0);
+  };
+
+  const handleSelectStarred = () => {
+    setShowStarred(true);
+    setSelectedCreatorId(null);
+    setSelectedPost(null);
+  };
+
+  const handleToggleStar = async (post: Post, newStarred: boolean) => {
+    if (demoMode) return;
+    try {
+      await toggleStarPost(post.id, newStarred);
+    } catch (e) {
+      console.error('Failed to toggle star:', e);
+      return;
+    }
+    const updated = { ...post, is_starred: newStarred ? 1 : 0 };
+    setPosts(prev => showStarred && !newStarred
+      ? prev.filter(p => p.id !== post.id)
+      : prev.map(p => p.id === post.id ? updated : p)
+    );
+    if (selectedPost?.id === post.id) setSelectedPost(updated);
+  };
+
+  async function loadCreators() {
+    if (demoModeRef.current) {
+      setCreators(DEMO_CREATORS);
+      return;
+    }
+    const data = await getCreators();
+    if (demoModeRef.current) return; // mode flipped to demo while this was in flight — discard stale real data
+    setCreators(data);
+  }
+
+  const handleSyncSubscriptions = async () => {
+    if (demoMode) return;
+    if (syncingSubscriptions) return;
+    setSyncingSubscriptions(true);
+    setSubscriptionSyncStatus(t.sidebar.statusScraping);
+    try {
+      try {
+        await invoke("scrape_subscriptions");
+      } catch (e) {
+        setSubscriptionSyncStatus(t.sidebar.statusScrapeError);
+      }
+      setSubscriptionSyncStatus(t.sidebar.statusSaving);
+      try {
+        const count = await invoke<number>("save_scraped_to_db");
+        setSubscriptionSyncStatus(t.sidebar.statusSynced(count));
+        await loadCreators();
+        emit("subscriptions-synced");
+      } catch (e: any) {
+        setSubscriptionSyncStatus(t.sidebar.statusDbError(String(e).substring(0, MAX_ERROR_LENGTH)));
+      }
+    } catch (e: any) {
+      setSubscriptionSyncStatus(t.sidebar.statusError(String(e).substring(0, MAX_ERROR_LENGTH)));
+    } finally {
+      setSyncingSubscriptions(false);
+      setTimeout(() => setSubscriptionSyncStatus(""), 8000);
+    }
+  };
+
+  async function loadPosts() {
+    const creatorChanged = prevCreatorIdRef.current !== selectedCreatorId;
+    prevCreatorIdRef.current = selectedCreatorId;
+    const effectiveTierFilter = creatorChanged ? null : tierFilter;
+    const effectiveDateFrom = creatorChanged ? null : dateFrom;
+    const effectiveDateTo = creatorChanged ? null : dateTo;
+    if (demoModeRef.current) {
+      setPosts(getDemoPosts(showStarred ? undefined : (selectedCreatorId ?? undefined), showStarred));
+      return;
+    }
+    const data = showStarred
+      ? await getPosts(undefined, searchQuery, true)
+      : await getPosts(selectedCreatorId ?? undefined, searchQuery, false, effectiveTierFilter, effectiveDateFrom, effectiveDateTo);
+    if (demoModeRef.current) return;
+    setPosts(data);
+  }
+
+  async function loadAssets(postId: string) {
+    if (demoModeRef.current) {
+      setSelectedPostAssets(getDemoAssets(postId));
+      return;
+    }
+    const data = await getPostAssets(postId);
+    if (demoModeRef.current) return;
+    setSelectedPostAssets(data);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background text-foreground">
+        <p>Loading library...</p>
+      </div>
+    );
+  }
+
+  return (
+    <SettingsProvider initial={initialSettings}>
+      <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+        {syncingSubscriptions && (
+          <div className="w-full bg-blue-600 text-white text-sm text-center py-1.5 flex-shrink-0">
+            {t.sidebar.syncBannerWarning}
+          </div>
+        )}
+        <div className="flex flex-1 overflow-hidden">
+        {view === 'settings' ? (
+          <SettingsView onClose={() => setView('library')} />
+        ) : (
+          <LibraryPanes
+            creators={creators}
+            posts={posts}
+            selectedCreatorId={selectedCreatorId}
+            selectedPost={selectedPost}
+            selectedPostAssets={selectedPostAssets}
+            searchQuery={searchQuery}
+            syncingPosts={syncingPosts}
+            syncingCreatorId={syncingCreatorId}
+            syncProgress={syncProgress}
+            syncTotal={syncTotal}
+            maxPosts={maxPosts}
+            syncMode={syncMode}
+            incrementalSync={incrementalSync}
+            syncingImagesCreatorId={syncingImagesCreatorId}
+            imageProgress={imageProgress}
+            imageTotal={imageTotal}
+            postCheckpoint={postCheckpoint}
+            isImagesPaused={isImagesPaused}
+            imagesDoneCount={imagesDoneCount}
+            imageFailedCount={imageFailedCount}
+            clearingCreatorId={clearingCreatorId}
+            showStarred={showStarred}
+            syncingSubscriptions={syncingSubscriptions}
+            subscriptionSyncStatus={subscriptionSyncStatus}
+            onSyncSubscriptions={handleSyncSubscriptions}
+            onSelectCreator={handleSelectCreator}
+            onCreatorsUpdated={loadCreators}
+            onDeleteCreator={handleDeleteCreator}
+            onOpenSettings={() => setView('settings')}
+            onSelectStarred={handleSelectStarred}
+            onSelectPost={setSelectedPost}
+            onSyncPosts={handleSyncPosts}
+            onClearData={handleClearData}
+            onSyncImages={handleSyncImages}
+            onSyncModeChange={setSyncMode}
+            onIncrementalSyncChange={setIncrementalSync}
+            onMaxPostsChange={setMaxPosts}
+            onSearch={setSearchQuery}
+            onPausePosts={handlePausePosts}
+            onCancelPosts={handleCancelPosts}
+            onResumePosts={handleResumePosts}
+            onPauseImages={handlePauseImages}
+            onCancelImages={handleCancelImages}
+            onToggleStar={handleToggleStar}
+            tierFilter={tierFilter}
+            datePreset={datePreset}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            distinctTiers={distinctTiers}
+            onTierChange={handleTierChange}
+            onDatePresetChange={handleDatePresetChange}
+            onDateRangeChange={handleDateRangeChange}
+          />
+        )}
+        </div>
+      </div>
+    </SettingsProvider>
+  );
+}

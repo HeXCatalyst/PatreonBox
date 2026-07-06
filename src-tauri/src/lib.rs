@@ -1,0 +1,204 @@
+use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
+mod commands;
+
+// debug_output_mode: "terminal" (open a standalone Terminal.app tailing a log file),
+// "none" (silence stderr entirely), or anything else (default: inherit — stderr flows
+// wherever it already does, e.g. the terminal that launched `npm run tauri dev`).
+#[cfg(unix)]
+fn apply_debug_output_mode(mode: &str, app_data_dir: &std::path::Path) {
+    use std::os::unix::io::AsRawFd;
+
+    match mode {
+        "terminal" => {
+            let log_path = app_data_dir.join("debug.log");
+            let file = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&log_path);
+            if let Ok(file) = file {
+                unsafe { libc::dup2(file.as_raw_fd(), libc::STDERR_FILENO); }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let script = format!("tell application \"Terminal\" to do script \"tail -f '{}'\"", log_path.display());
+                let _ = std::process::Command::new("osascript").arg("-e").arg(script).spawn();
+            }
+        }
+        "none" => {
+            if let Ok(null) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
+                unsafe { libc::dup2(null.as_raw_fd(), libc::STDERR_FILENO); }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_debug_output_mode(_mode: &str, _app_data_dir: &std::path::Path) {}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let migrations = vec![
+        Migration {
+            version: 1,
+            description: "create_initial_tables",
+            sql: include_str!("../migrations/00001_init.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "add_downloaded_at_to_assets",
+            sql: "ALTER TABLE assets ADD COLUMN downloaded_at TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "add_subscription_type_and_is_subscribed",
+            sql: "ALTER TABLE creators ADD COLUMN subscription_type TEXT; \
+                  ALTER TABLE creators ADD COLUMN is_subscribed INTEGER NOT NULL DEFAULT 1;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 4,
+            description: "add_sync_checkpoints",
+            sql: "CREATE TABLE IF NOT EXISTS sync_checkpoints (
+                    creator_id TEXT PRIMARY KEY,
+                    cursor     TEXT NOT NULL,
+                    posts_done INTEGER NOT NULL DEFAULT 0,
+                    mode       TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                  );",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "add_creator_pinning",
+            sql: "ALTER TABLE creators ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0; \
+                  ALTER TABLE creators ADD COLUMN pin_order INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            // An asset is uniquely one file within one post. Asset ids used to be
+            // hashed from the (token-carrying) CDN URL, then later from post_id+
+            // file_name — so rows synced under the old scheme and re-synced under
+            // the new one landed with different ids and no longer deduped, leaving
+            // a duplicate placeholder per image. Collapse those duplicates (keeping
+            // the downloaded/newest row per post+filename) and enforce the natural
+            // key with a UNIQUE index, so dedup no longer depends on the id scheme.
+            version: 6,
+            description: "dedupe_assets_and_unique_post_file",
+            sql: "DELETE FROM assets \
+                  WHERE id IN ( \
+                    SELECT id FROM ( \
+                      SELECT id, ROW_NUMBER() OVER ( \
+                        PARTITION BY post_id, file_name \
+                        ORDER BY (downloaded_at IS NOT NULL) DESC, updated_at DESC, created_at DESC \
+                      ) AS rn FROM assets \
+                    ) WHERE rn > 1 \
+                  ); \
+                  CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_post_file ON assets(post_id, file_name);",
+            kind: MigrationKind::Up,
+        },
+    ];
+
+    tauri::Builder::default()
+        .setup(|app| {
+            use tauri::Manager;
+            let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
+            std::fs::create_dir_all(&app_data_dir).unwrap_or_default();
+
+            eprintln!("DEBUG: App data dir = {:?}", app_data_dir);
+
+            // Load persisted settings (fall back to defaults if file missing/corrupt)
+            let settings = {
+                let path = app_data_dir.join("settings.json");
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_else(commands::settings::AppSettings::default)
+            };
+
+            // Ensure the active images directory exists: the default
+            // app_data_dir/images, or the user's custom_images_dir if a
+            // migration has already relocated it.
+            let images_dir = settings.custom_images_dir.clone()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| app_data_dir.join("images"));
+            std::fs::create_dir_all(&images_dir).unwrap_or_default();
+
+            // debug_output_mode only takes effect while developer mode is on; when
+            // it's off, output behaves as the default ("inherit") regardless of the
+            // stored mode — so the user's mode choice is preserved across toggles
+            // without leaking a standalone-terminal/silenced state into normal use.
+            let effective_debug_mode = if settings.developer_mode_enabled {
+                settings.debug_output_mode.as_str()
+            } else {
+                "inherit"
+            };
+            apply_debug_output_mode(effective_debug_mode, &app_data_dir);
+            app.manage(commands::AppSettingsState(std::sync::RwLock::new(settings)));
+
+            // Load persisted account info (None if file missing/corrupt = logged out)
+            let account_info = {
+                let path = app_data_dir.join("account.json");
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+            };
+            app.manage(commands::AccountInfoState(std::sync::RwLock::new(account_info)));
+
+            Ok(())
+        })
+        .manage(commands::ScrapedSubscriptionsState(std::sync::Mutex::new(None)))
+        .manage(commands::ScrapedPostsRawState(std::sync::Mutex::new(None)))
+        .manage(commands::ImageDownloadCancelFlag(
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+        ))
+        .manage(commands::ImageMigrationLock(
+            std::sync::atomic::AtomicBool::new(false)
+        ))
+        .plugin(SqlBuilder::default().add_migrations("sqlite:patreonbox.db", migrations).build())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            commands::file_ops::resolve_app_data_dir,
+            commands::file_ops::resolve_images_dir,
+            commands::file_ops::ensure_demo_assets_on_disk,
+            commands::file_ops::create_asset_dir,
+            commands::file_ops::get_file_checksum,
+            commands::file_ops::read_file_metadata,
+            commands::file_ops::copy_imported_file,
+            commands::file_ops::save_asset_to_downloads,
+            commands::file_ops::open_asset_in_system,
+            commands::file_ops::clear_creator_data,
+            commands::file_ops::delete_creator,
+            commands::logging::log_sync_error,
+            commands::auth::open_auth_webview,
+            commands::auth::trigger_login_success,
+            commands::scraping::scrape_creator_posts,
+            commands::scraping::report_scraped_posts_progress,
+            commands::scraping::report_scraped_post_page,
+            commands::scraping::report_scraped_posts_raw,
+            commands::scraping::download_creator_images,
+            commands::scraping::get_sync_checkpoint,
+            commands::scraping::clear_sync_checkpoint,
+            commands::scraping::cancel_image_download,
+            commands::scraping::close_post_sync_window,
+            commands::subscriptions::scrape_subscriptions,
+            commands::subscriptions::report_scraped_subscriptions,
+            commands::subscriptions::get_scraped_subscriptions,
+            commands::subscriptions::read_scraped_file,
+            commands::subscriptions::save_scraped_to_db,
+            commands::subscriptions::set_creator_pinned,
+            commands::subscriptions::reorder_pinned_creators,
+            commands::settings::read_settings,
+            commands::settings::write_settings,
+            commands::settings::get_storage_usage,
+            commands::settings::get_app_version,
+            commands::settings::clear_all_data,
+            commands::image_migration::migrate_images_dir,
+            commands::account::report_account_info,
+            commands::account::get_account_info,
+            commands::account::logout,
+            commands::self_check::run_self_check,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

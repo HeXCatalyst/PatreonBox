@@ -1,0 +1,66 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and file
+.vscode
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+__MACOSX/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 数据库文件 和 图像文件
+data/*
+*.db
+*.sqlite
+*.sqlite3
+patreon_scraped.json
+debug_patreon.html
+account.json
+settings.json
+cookies.json
+cookie*.json
+tokens.json
+secrets.json
+*.jpg
+*.png
+*.jpeg
+
+# Exception: bundled stock photos for the demo-mode feature (not user data)
+!DisplayMode/*.jpg
+!DisplayMode/*.jpeg
+!DisplayMode/*.png
+
+# Exception: Tauri app icons referenced by tauri.conf.json / bundler (not user data)
+!src-tauri/icons/*.png
+
+# Exception: README screenshots (demo-mode captures, not user data)
+!screenshots/*.png
+
+.temp.md
+.claude/
+.agents/
+skills-lock.json
+.superpowers/
+.worktrees/
+PRIVACY_AUDIT_REPORT.md
+docs/
