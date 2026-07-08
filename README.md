@@ -19,6 +19,7 @@ A local-first desktop app for archiving, browsing, and reading your [Patreon](ht
 - **Image downloading** — bulk-download all post attachments to local storage
 - **Full-text search** — search post titles and content across any creator
 - **Starred posts** — bookmark posts and browse your collection in one place
+- **Media view** — a per-creator image wall (X-style) showing every downloaded image, sortable by date
 - **Sync modes** — Normal (content + assets), Full (Normal + auto-download images)
 - **Incremental sync** — stop paging early once already-synced posts are found, for quick "just the new stuff" updates
 - **Pause & resume** — interrupt long syncs and pick up where you left off
@@ -100,6 +101,21 @@ On first launch (or whenever you're not logged in), the app opens directly to **
 - **Star** — the ★ button in the metadata row toggles the star from the Reading View.
 
 ![Full-screen image lightbox](screenshots/lightbox.png)
+
+---
+
+### Media View
+
+Each creator's page has a **Posts / Media** toggle in the header. Switch to **Media**
+for an X-style image wall that gathers every downloaded image from that creator across
+all posts:
+
+- **Sort** — toggle Newest / Oldest first.
+- **Density** — use the 小/大 slider to resize thumbnails.
+- **Lightbox** — click any image to open it full-screen and page through the creator's
+  entire media set.
+
+Only downloaded images appear here — sync/download images from the Posts view first.
 
 ---
 

@@ -1,7 +1,7 @@
 import { Creator, Post, SyncCheckpoint } from "../../types/db";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Image as ImageIcon, Download, ImageDown, Loader2, ChevronLeft, ChevronRight, Trash2, Star } from "lucide-react";
+import { Search, Image as ImageIcon, Download, ImageDown, Loader2, ChevronLeft, ChevronRight, Trash2, Star, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -108,6 +108,7 @@ interface PostListProps {
   onTierChange?: (v: number | null) => void;
   onDatePresetChange?: (preset: DatePreset) => void;
   onDateRangeChange?: (from: string | null, to: string | null) => void;
+  onShowMedia?: () => void;
 }
 
 export function PostList({
@@ -152,6 +153,7 @@ export function PostList({
   onTierChange,
   onDatePresetChange,
   onDateRangeChange,
+  onShowMedia,
 }: PostListProps) {
   const t = useTranslation();
   const [currentPage, setCurrentPage] = useState(1);
@@ -227,7 +229,25 @@ export function PostList({
           </div>
         ) : selectedCreator && (
           <div className="flex items-center justify-between pb-1 gap-1.5 flex-wrap">
-            <h2 className="font-semibold truncate pr-1 flex-1 min-w-0">{selectedCreator.name}</h2>
+            <h2 className="font-semibold truncate pr-1 min-w-0">{selectedCreator.name}</h2>
+
+            {/* Posts | Media view toggle */}
+            <div className="h-7 flex items-center border rounded text-xs bg-background overflow-hidden flex-shrink-0">
+              <button className="px-2.5 h-full flex items-center gap-1 bg-secondary text-secondary-foreground font-medium">
+                <FileText className="h-3.5 w-3.5" />
+                {t.mediaView.postsTab}
+              </button>
+              <button
+                onClick={onShowMedia}
+                className="px-2.5 h-full flex items-center gap-1 text-muted-foreground hover:bg-muted/50 transition-colors"
+                title={t.mediaView.mediaTab}
+              >
+                <ImageIcon className="h-3.5 w-3.5" />
+                {t.mediaView.mediaTab}
+              </button>
+            </div>
+
+            <div className="flex-1 min-w-0" />
 
             {/* === POST SYNCING STATE === */}
             {isSyncingPosts && (

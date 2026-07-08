@@ -121,6 +121,15 @@ export interface Translations {
     saveToDownloads: string;
     close: string;
   };
+  mediaView: {
+    postsTab: string;
+    mediaTab: string;
+    count: (n: number) => string;
+    newestFirst: string;
+    oldestFirst: string;
+    loading: string;
+    empty: string;
+  };
   selfCheck: {
     heading: string;
     description: string;
@@ -373,6 +382,15 @@ const zh: Translations = {
     saveToDownloads: '保存到下载',
     close: '关闭 (Esc)',
   },
+  mediaView: {
+    postsTab: '帖子',
+    mediaTab: '媒体',
+    count: (n) => `${n} 张`,
+    newestFirst: '最新在前',
+    oldestFirst: '最早在前',
+    loading: '加载中…',
+    empty: '暂无已下载的图片。先在帖子页同步/下载图片后再来这里查看。',
+  },
   selfCheck: {
     heading: '运行自检',
     description: '检查本机环境是否正常（目录、数据库、代理、网络连通性）。不会登录或修改你的数据。',
@@ -624,6 +642,15 @@ const en: Translations = {
     downloadedAt: (date) => `Downloaded at ${date}`,
     saveToDownloads: 'Save to Downloads',
     close: 'Close (Esc)',
+  },
+  mediaView: {
+    postsTab: 'Posts',
+    mediaTab: 'Media',
+    count: (n) => `${n} image${n === 1 ? '' : 's'}`,
+    newestFirst: 'Newest',
+    oldestFirst: 'Oldest',
+    loading: 'Loading…',
+    empty: 'No downloaded images yet. Sync/download images from the Posts view first.',
   },
   selfCheck: {
     heading: 'Self-Check',

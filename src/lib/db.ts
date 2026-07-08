@@ -146,6 +146,30 @@ export async function getPostAssets(postId: string): Promise<Asset[]> {
   return db.select("SELECT * FROM assets WHERE post_id = ? ORDER BY created_at ASC", [postId]);
 }
 
+const MEDIA_IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
+
+/**
+ * All downloaded image assets for a creator, across every post, ordered by the
+ * source post's date. Powers the per-creator Media view (X.com-style image wall).
+ * Images are identified by filename extension to match the per-post gallery.
+ */
+export async function getCreatorMedia(
+  creatorId: string,
+  order: 'desc' | 'asc' = 'desc',
+): Promise<Asset[]> {
+  const db = await getDb();
+  const dir = order === 'asc' ? 'ASC' : 'DESC';
+  const rows = await db.select<Asset[]>(
+    `SELECT a.*
+     FROM assets a
+     JOIN posts p ON a.post_id = p.id
+     WHERE p.creator_id = ? AND a.downloaded_at IS NOT NULL
+     ORDER BY COALESCE(p.published_at, p.created_at) ${dir}, a.created_at ASC`,
+    [creatorId],
+  );
+  return rows.filter(a => MEDIA_IMAGE_RE.test(a.file_name));
+}
+
 // -----------------------------------------------------------------------------
 // UPSERTS
 // -----------------------------------------------------------------------------

@@ -13,6 +13,7 @@ import type { Creator, Post, Asset, SyncCheckpoint } from "../../types/db";
 import { Sidebar } from "./Sidebar";
 import { PostList } from "./PostList";
 import { ReadingView } from "./ReadingView";
+import { MediaView } from "./MediaView";
 import { SettingsView } from "../settings/SettingsView";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { loadSettings } from "../../lib/settings";
@@ -29,6 +30,10 @@ interface LibraryPanesProps {
   creators: (Creator & { post_count: number })[];
   posts: Post[];
   selectedCreatorId: string | null;
+  creatorTab: 'posts' | 'media';
+  mediaOrder: 'desc' | 'asc';
+  onCreatorTabChange: (tab: 'posts' | 'media') => void;
+  onMediaOrderChange: (order: 'desc' | 'asc') => void;
   selectedPost: Post | null;
   selectedPostAssets: Asset[];
   searchQuery: string;
@@ -81,7 +86,8 @@ interface LibraryPanesProps {
 }
 
 function LibraryPanes({
-  creators, posts, selectedCreatorId, selectedPost, selectedPostAssets,
+  creators, posts, selectedCreatorId, creatorTab, mediaOrder, onCreatorTabChange, onMediaOrderChange,
+  selectedPost, selectedPostAssets,
   searchQuery, syncingPosts, syncingCreatorId, syncProgress, syncTotal,
   maxPosts, syncMode, incrementalSync, syncingImagesCreatorId, imageProgress, imageTotal,
   postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
@@ -127,12 +133,24 @@ function LibraryPanes({
         onDrag={setSidebarWidth}
         onCommit={w => updateSettings({ sidebar_width: w })}
       />
+      {creatorTab === 'media' && selectedCreatorId ? (
+        <MediaView
+          creatorId={selectedCreatorId}
+          creatorName={creators.find(c => c.id === selectedCreatorId)?.name ?? ''}
+          order={mediaOrder}
+          onOrderChange={onMediaOrderChange}
+          onShowPosts={() => onCreatorTabChange('posts')}
+          demoMode={settings.demo_mode}
+        />
+      ) : (
+      <>
       <div style={{ width: postListWidth, flexShrink: 0 }} className="h-full">
         <PostList
           posts={posts}
           searchQuery={searchQuery}
           selectedPostId={selectedPost?.id || null}
           selectedCreator={creators.find(c => c.id === selectedCreatorId)}
+          onShowMedia={() => onCreatorTabChange('media')}
           isSyncingPosts={syncingPosts && selectedCreatorId === syncingCreatorId}
           syncProgress={syncProgress}
           syncTotal={syncTotal}
@@ -191,6 +209,8 @@ function LibraryPanes({
         assets={selectedPostAssets}
         onToggleStar={onToggleStar}
       />
+      </>
+      )}
     </>
   );
 }
@@ -201,6 +221,8 @@ export function LibraryView() {
   const [creators, setCreators] = useState<(Creator & { post_count: number })[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
+  const [creatorTab, setCreatorTab] = useState<'posts' | 'media'>('posts');
+  const [mediaOrder, setMediaOrder] = useState<'desc' | 'asc'>('desc');
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [selectedPostAssets, setSelectedPostAssets] = useState<Asset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -550,6 +572,7 @@ export function LibraryView() {
 
   const handleSelectCreator = (id: string | null) => {
     setSelectedCreatorId(id);
+    setCreatorTab('posts');
     setSearchQuery("");
     setShowStarred(false);
     setImageFailedCount(0);
@@ -557,6 +580,7 @@ export function LibraryView() {
 
   const handleSelectStarred = () => {
     setShowStarred(true);
+    setCreatorTab('posts');
     setSelectedCreatorId(null);
     setSelectedPost(null);
   };
@@ -666,6 +690,10 @@ export function LibraryView() {
             creators={creators}
             posts={posts}
             selectedCreatorId={selectedCreatorId}
+            creatorTab={creatorTab}
+            mediaOrder={mediaOrder}
+            onCreatorTabChange={setCreatorTab}
+            onMediaOrderChange={setMediaOrder}
             selectedPost={selectedPost}
             selectedPostAssets={selectedPostAssets}
             searchQuery={searchQuery}
