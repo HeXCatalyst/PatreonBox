@@ -217,13 +217,17 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
         WebviewUrl::External("https://www.patreon.com/home".parse().unwrap())
     );
 
-    let _window = builder
+    // A hidden WKWebView doesn't run its render loop, which stops the page from making
+    // the API calls the scraper depends on. So instead of hiding, show a small unfocused
+    // window when it should stay out of the way — it still renders (scrapes) unseen-ish.
+    let unobtrusive = super::settings::scraper_windows_hidden(&app);
+    let b = builder
         .title("Syncing Subscriptions...")
-        .visible(!super::settings::scraper_windows_hidden(&app))
-        .inner_size(800.0, 600.0)
-        .initialization_script(init_script)
-        .build()
-        .map_err(|e| e.to_string())?;
+        .visible(true)
+        .focused(!unobtrusive)
+        .inner_size(if unobtrusive { 420.0 } else { 800.0 }, if unobtrusive { 300.0 } else { 600.0 })
+        .initialization_script(init_script);
+    let _window = b.build().map_err(|e| e.to_string())?;
 
     eprintln!("DEBUG: Scraper window created. Waiting for init_script to send data via invoke...");
 
@@ -256,12 +260,13 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
         }
 
         // A normal scrape finishes in ~10s. If it's still running well past that,
-        // it's probably stuck — e.g. Patreon is showing a login / verification page
-        // inside the (hidden) window. Reveal it so the user can act, rather than let
-        // it silently time out.
+        // it's probably stuck — e.g. Patreon is showing a login / verification page.
+        // Bring the (off-screen) window on-screen and focus it so the user can act,
+        // rather than let it silently time out.
         if i == 18 {
             if let Some(w) = app.get_webview_window("subscription-scraper") {
-                let _ = w.show();
+                let _ = w.set_size(tauri::LogicalSize::new(800.0, 600.0));
+                let _ = w.set_focus();
             }
         }
 

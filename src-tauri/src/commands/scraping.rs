@@ -247,13 +247,18 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
         WebviewUrl::External(posts_url.parse().map_err(|e: url::ParseError| e.to_string())?)
     );
 
-    let _window = builder
+    // A hidden (`.visible(false)`) WKWebView doesn't run the page's render loop, so
+    // Patreon's SPA never fires the /api/posts request the scraper intercepts — hiding
+    // silently breaks scraping. Instead, when it should stay out of the way, show a
+    // small unfocused window: it still renders (scrapes) but doesn't grab the screen.
+    let unobtrusive = super::settings::scraper_windows_hidden(&app);
+    let b = builder
         .title("Scraping API Posts...")
-        .visible(!super::settings::scraper_windows_hidden(&app))
-        .inner_size(800.0, 600.0)
-        .initialization_script(init_script)
-        .build()
-        .map_err(|e| e.to_string())?;
+        .visible(true)
+        .focused(!unobtrusive)
+        .inner_size(if unobtrusive { 420.0 } else { 800.0 }, if unobtrusive { 300.0 } else { 600.0 })
+        .initialization_script(init_script);
+    let _window = b.build().map_err(|e| e.to_string())?;
 
     eprintln!("DEBUG: Post scraper API window created. Waiting for data...");
 
