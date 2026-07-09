@@ -255,6 +255,16 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
             return Ok(creators);
         }
 
+        // A normal scrape finishes in ~10s. If it's still running well past that,
+        // it's probably stuck — e.g. Patreon is showing a login / verification page
+        // inside the (hidden) window. Reveal it so the user can act, rather than let
+        // it silently time out.
+        if i == 18 {
+            if let Some(w) = app.get_webview_window("subscription-scraper") {
+                let _ = w.show();
+            }
+        }
+
         eprintln!("DEBUG: Poll {}: No data yet, waiting...", i);
     }
 

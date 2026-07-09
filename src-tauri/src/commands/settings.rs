@@ -128,15 +128,16 @@ pub fn read_settings(app: AppHandle) -> Result<AppSettings, String> {
 }
 
 /// Whether the scraper webview windows should be created hidden (run in the
-/// background). True only when the user has developer mode on and set debug
-/// output to "none" — the quietest mode. In every other state the windows stay
-/// visible, matching prior behavior. (Verified: a hidden WKWebView still runs
-/// its JS and network fetches, so scraping works identically while hidden.)
+/// background). Hidden by default — scraping runs silently for normal users.
+/// Shown only when developer mode is on, so a developer can watch what the
+/// scraper is doing. (Verified: a hidden WKWebView still runs its JS and network
+/// fetches, so scraping works identically while hidden.) A stuck scrape — e.g.
+/// Patreon demanding re-login — is surfaced by the caller's auto-reveal fallback.
 pub fn scraper_windows_hidden(app: &AppHandle) -> bool {
     let state = app.state::<AppSettingsState>();
     let hidden = match state.0.read() {
-        Ok(s) => s.developer_mode_enabled && s.debug_output_mode == "none",
-        Err(_) => false,
+        Ok(s) => !s.developer_mode_enabled,
+        Err(_) => false, // on lock poisoning, fail open (visible) rather than hide silently
     };
     hidden
 }
