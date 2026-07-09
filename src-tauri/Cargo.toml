@@ -15,10 +15,15 @@ name = "tauri_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.5.6", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "=2.10.3", features = ["protocol-asset"] }
+# Pin the Tauri 2.10-era family: 2.11 tightened capability ACL so remote (patreon.com)
+# webviews can no longer invoke the app's own commands, which breaks the scraper's
+# data channel. Held at 2.10 until we migrate the scraper off remote-command IPC.
+tauri-runtime = "=2.10.1"
+tauri-utils = "=2.8.3"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
