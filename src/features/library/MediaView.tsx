@@ -12,7 +12,7 @@ const SIZE_KEY = "patreonbox-media-size";
 const DEFAULT_SIZE = 140;
 const GAP = 4;      // grid gap in px
 const PAD = 12;     // grid padding in px
-const OVERSCAN = 3; // extra rows rendered above/below the viewport
+const OVERSCAN = 6; // extra rows rendered above/below the viewport (preloads while scrolling)
 
 type Order = "desc" | "asc";
 
@@ -189,7 +189,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
       </div>
 
       {/* Grid — virtualized: only rows near the viewport are in the DOM */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
+      <div ref={scrollRef} className="media-scroll flex-1 overflow-y-auto" onScroll={handleScroll}>
         {loading ? (
           <div className="p-8 text-center text-sm text-muted-foreground">{t.mediaView.loading}</div>
         ) : media.length === 0 ? (
@@ -210,12 +210,11 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
               {visible.map((asset, i) => {
                 const realIdx = startIdx + i;
                 return (
-                  <div key={asset.id} className="relative group" style={{ aspectRatio: "1" }}>
+                  <div key={asset.id} className="relative group bg-muted/20 rounded" style={{ aspectRatio: "1" }}>
                     <img
                       src={getUrl(asset)}
                       alt={asset.file_name}
                       className="w-full h-full object-cover rounded cursor-pointer"
-                      loading="lazy"
                       decoding="async"
                       onClick={() => setLightboxIndex(realIdx)}
                     />

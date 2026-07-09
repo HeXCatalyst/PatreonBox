@@ -208,7 +208,13 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
         className="max-w-[90vw] max-h-[85vh] object-contain rounded shadow-2xl select-none"
         draggable={false}
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          // Only apply a transform when actually zoomed/panned. An always-on transform
+          // forces the image onto its own compositing layer, which makes large animated
+          // GIFs repaint the whole layer every frame and stutter. Omitting it in the
+          // default view lets GIFs animate on the normal paint path.
+          transform: (zoom !== 1 || pan.x !== 0 || pan.y !== 0)
+            ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+            : undefined,
           transformOrigin: "center center",
           cursor: isDragging ? "grabbing" : "grab",
         }}
