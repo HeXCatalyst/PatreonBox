@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText } from "lucide-react";
 import { Asset } from "../../types/db";
 import { getCreatorMedia } from "../../lib/db";
@@ -10,6 +10,9 @@ import { useTranslation } from "../../lib/i18n";
 const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
 const SIZE_KEY = "patreonbox-media-size";
 const DEFAULT_SIZE = 140;
+const GAP = 4;      // grid gap in px
+const PAD = 12;     // grid padding in px
+const OVERSCAN = 3; // extra rows rendered above/below the viewport
 
 type Order = "desc" | "asc";
 
@@ -44,6 +47,14 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     return stored ? parseInt(stored, 10) : DEFAULT_SIZE;
   });
 
+  // --- Virtualization state: only rows near the viewport are mounted, so DOM
+  // node count and decoded-image memory stay bounded no matter how far you scroll.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [contentW, setContentW] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
   useEffect(() => {
     invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
   }, []);
@@ -66,6 +77,38 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     return () => { cancelled = true; };
   }, [creatorId, order, demoMode]);
 
+  // Reset scroll to top when the underlying media changes (new creator / re-sort).
+  useEffect(() => {
+    setScrollTop(0);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [creatorId, order]);
+
+  // Track the scroll container's size (responsive columns + viewport height).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      setContentW(el.clientWidth - PAD * 2);
+      setViewportH(el.clientHeight);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (rafRef.current != null) return; // throttle to one update per frame
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      setScrollTop(el.scrollTop);
+    });
+  }, []);
+
+  useEffect(() => () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); }, []);
+
   const getUrl = useCallback((asset: Asset) => {
     if (!imagesDir) return "";
     return convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
@@ -76,6 +119,22 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     setSize(val);
     localStorage.setItem(SIZE_KEY, String(val));
   };
+
+  // --- Derived grid geometry (matches the old `auto-fill, minmax(size, 1fr)` column count).
+  const cols = contentW > 0 ? Math.max(1, Math.floor((contentW + GAP) / (size + GAP))) : 1;
+  const cellW = cols > 0 ? (contentW - GAP * (cols - 1)) / cols : size;
+  const rowH = cellW + GAP;
+  const totalRows = Math.ceil(media.length / cols);
+  const totalHeight = totalRows > 0 ? totalRows * rowH - GAP + PAD * 2 : 0;
+
+  const firstRow = rowH > 0 ? Math.floor(scrollTop / rowH) : 0;
+  const lastRow = rowH > 0 ? Math.ceil((scrollTop + viewportH) / rowH) : 0;
+  const startRow = Math.max(0, firstRow - OVERSCAN);
+  const endRow = Math.min(totalRows, lastRow + OVERSCAN);
+  const startIdx = startRow * cols;
+  const endIdx = Math.min(media.length, endRow * cols);
+  const visible = media.slice(startIdx, endIdx);
+  const offsetY = PAD + startRow * rowH;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
@@ -129,39 +188,48 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
         </div>
       </div>
 
-      {/* Grid */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Grid — virtualized: only rows near the viewport are in the DOM */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
         {loading ? (
           <div className="p-8 text-center text-sm text-muted-foreground">{t.mediaView.loading}</div>
         ) : media.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">{t.mediaView.empty}</div>
         ) : (
-          <div
-            className="p-3"
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(auto-fill, minmax(min(${size}px, 100%), 1fr))`,
-              gap: "4px",
-            }}
-          >
-            {media.map((asset, idx) => (
-              <div key={asset.id} className="relative group" style={{ aspectRatio: "1" }}>
-                <img
-                  src={getUrl(asset)}
-                  alt={asset.file_name}
-                  className="w-full h-full object-cover rounded cursor-pointer"
-                  loading="lazy"
-                  onClick={() => setLightboxIndex(idx)}
-                />
-                <button
-                  className="absolute bottom-1.5 right-1.5 bg-black/50 hover:bg-black/70 rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title={t.imageGallery.saveToDownloads}
-                  onClick={e => { e.stopPropagation(); invoke("save_asset_to_downloads", { localPath: asset.local_path }).catch(console.error); }}
-                >
-                  <Download className="h-3 w-3 text-white" />
-                </button>
-              </div>
-            ))}
+          <div style={{ height: totalHeight, position: "relative" }}>
+            <div
+              style={{
+                position: "absolute",
+                top: offsetY,
+                left: PAD,
+                right: PAD,
+                display: "grid",
+                gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                gap: `${GAP}px`,
+              }}
+            >
+              {visible.map((asset, i) => {
+                const realIdx = startIdx + i;
+                return (
+                  <div key={asset.id} className="relative group" style={{ aspectRatio: "1" }}>
+                    <img
+                      src={getUrl(asset)}
+                      alt={asset.file_name}
+                      className="w-full h-full object-cover rounded cursor-pointer"
+                      loading="lazy"
+                      decoding="async"
+                      onClick={() => setLightboxIndex(realIdx)}
+                    />
+                    <button
+                      className="absolute bottom-1.5 right-1.5 bg-black/50 hover:bg-black/70 rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title={t.imageGallery.saveToDownloads}
+                      onClick={e => { e.stopPropagation(); invoke("save_asset_to_downloads", { localPath: asset.local_path }).catch(console.error); }}
+                    >
+                      <Download className="h-3 w-3 text-white" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
