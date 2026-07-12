@@ -96,6 +96,15 @@ pub fn run() {
                   CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_post_file ON assets(post_id, file_name);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // Records why a download failed, so the download manager can tell
+            // "failed" apart from "not yet attempted": downloaded_at IS NULL AND
+            // download_error IS NULL = queued; download_error IS NOT NULL = failed.
+            version: 7,
+            description: "add_download_error_to_assets",
+            sql: "ALTER TABLE assets ADD COLUMN download_error TEXT;",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -154,6 +163,7 @@ pub fn run() {
         .manage(commands::ImageMigrationLock(
             std::sync::atomic::AtomicBool::new(false)
         ))
+        .manage(commands::DownloadManagerState::new())
         .plugin(SqlBuilder::default().add_migrations("sqlite:patreonbox.db", migrations).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -167,6 +177,7 @@ pub fn run() {
             commands::file_ops::copy_imported_file,
             commands::file_ops::save_asset_to_downloads,
             commands::file_ops::open_asset_in_system,
+            commands::file_ops::delete_downloaded_assets,
             commands::file_ops::clear_creator_data,
             commands::file_ops::delete_creator,
             commands::logging::log_sync_error,
@@ -198,6 +209,14 @@ pub fn run() {
             commands::account::get_account_info,
             commands::account::logout,
             commands::self_check::run_self_check,
+            commands::download_manager::start_downloads,
+            commands::download_manager::get_download_state,
+            commands::download_manager::pause_downloads,
+            commands::download_manager::resume_downloads,
+            commands::download_manager::cancel_download,
+            commands::download_manager::retry_download,
+            commands::download_manager::retry_all_failed,
+            commands::download_manager::clear_completed_downloads,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

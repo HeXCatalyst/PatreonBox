@@ -19,6 +19,13 @@ export async function getDb(): Promise<Database> {
       if (!String(e).includes('duplicate column')) throw e;
     });
 
+    // Download failure reason (belt-and-suspenders alongside migration v7).
+    await dbInstance.execute(
+      "ALTER TABLE assets ADD COLUMN download_error TEXT"
+    ).catch((e: unknown) => {
+      if (!String(e).includes('duplicate column')) throw e;
+    });
+
     // Self-healing cleanup: merge creator rows that point at the same Patreon
     // creator. Patreon exposes one creator under several URL forms — /slug,
     // /cw/slug, /c/slug, plus case and trailing-slash variants — so a plain

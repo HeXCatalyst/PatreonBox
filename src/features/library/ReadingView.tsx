@@ -34,7 +34,12 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
     invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
   }, []);
 
-  const assetUrl = (path: string) => convertFileSrc(`${imagesDir}/${path.replace(/^images\//, "")}`);
+  const assetUrl = (path: string, version?: string | null) => {
+    const base = convertFileSrc(`${imagesDir}/${path.replace(/^images\//, "")}`);
+    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
+    // full-res replacement at the same path) isn't served from WebKit's cache.
+    return version ? `${base}?v=${encodeURIComponent(version)}` : base;
+  };
 
   if (!post) {
     return (
@@ -155,7 +160,7 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
                             <div className="font-medium text-sm mb-2 truncate">{asset.file_name}</div>
                             <audio
                               controls
-                              src={assetUrl(asset.local_path)}
+                              src={assetUrl(asset.local_path, asset.downloaded_at)}
                               className="w-full h-9 mb-2"
                             />
                             <div className="flex gap-2 justify-end">

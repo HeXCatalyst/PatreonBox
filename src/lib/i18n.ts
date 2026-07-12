@@ -19,6 +19,7 @@ export interface Translations {
     pinnedHeading: (count: number) => string;
     subscriptionsHeading: (count: number) => string;
     settings: string;
+    downloads: string;
     unpin: string;
     pin: string;
     delete: string;
@@ -129,6 +130,12 @@ export interface Translations {
     oldestFirst: string;
     loading: string;
     empty: string;
+    select: string;
+    cancel: string;
+    selectedCount: (n: number) => string;
+    deleteSelected: string;
+    deleteConfirmTitle: (n: number) => string;
+    deleteConfirmDesc: string;
   };
   selfCheck: {
     heading: string;
@@ -196,6 +203,10 @@ export interface Translations {
     dataDirLabel: string;
     openInFinder: string;
     storageUsedLabel: string;
+    deleteModeLabel: string;
+    deleteModeDesc: string;
+    deleteModeTrash: string;
+    deleteModeDirect: string;
     database: (size: string) => string;
     images: (size: string) => string;
     total: (size: string) => string;
@@ -280,6 +291,7 @@ const zh: Translations = {
     pinnedHeading: (count) => `置顶 (${count})`,
     subscriptionsHeading: (count) => `订阅 (${count})`,
     settings: '设置(Settings)',
+    downloads: '下载',
     unpin: '取消置顶',
     pin: '置顶',
     delete: '删除',
@@ -390,6 +402,12 @@ const zh: Translations = {
     oldestFirst: '最早在前',
     loading: '加载中…',
     empty: '暂无已下载的图片。先在帖子页同步/下载图片后再来这里查看。',
+    select: '选择',
+    cancel: '取消',
+    selectedCount: (n) => `已选 ${n} 张`,
+    deleteSelected: '删除',
+    deleteConfirmTitle: (n) => `删除 ${n} 张图片?`,
+    deleteConfirmDesc: '将从磁盘移除这些图片文件(按设置移入废纸篓或直接删除),之后可随时重新下载。',
   },
   selfCheck: {
     heading: '运行自检',
@@ -457,6 +475,10 @@ const zh: Translations = {
     dataDirLabel: '数据目录',
     openInFinder: '在 Finder 中打开',
     storageUsedLabel: '占用空间',
+    deleteModeLabel: '删除方式',
+    deleteModeDesc: '在 Media 页删除图片时:移入废纸篓(可恢复),或直接永久删除。',
+    deleteModeTrash: '移入废纸篓',
+    deleteModeDirect: '直接删除',
     database: (size) => `数据库 ${size}`,
     images: (size) => `图片 ${size}`,
     total: (size) => `合计 ${size}`,
@@ -541,6 +563,7 @@ const en: Translations = {
     pinnedHeading: (count) => `Pinned (${count})`,
     subscriptionsHeading: (count) => `Subscriptions (${count})`,
     settings: 'Settings',
+    downloads: 'Downloads',
     unpin: 'Unpin',
     pin: 'Pin',
     delete: 'Delete',
@@ -651,6 +674,12 @@ const en: Translations = {
     oldestFirst: 'Oldest',
     loading: 'Loading…',
     empty: 'No downloaded images yet. Sync/download images from the Posts view first.',
+    select: 'Select',
+    cancel: 'Cancel',
+    selectedCount: (n) => `${n} selected`,
+    deleteSelected: 'Delete',
+    deleteConfirmTitle: (n) => `Delete ${n} image${n === 1 ? '' : 's'}?`,
+    deleteConfirmDesc: 'The image files will be removed from disk (moved to Trash or deleted, per your settings) and can be re-downloaded anytime.',
   },
   selfCheck: {
     heading: 'Self-Check',
@@ -718,6 +747,10 @@ const en: Translations = {
     dataDirLabel: 'Data Directory',
     openInFinder: 'Open in Finder',
     storageUsedLabel: 'Storage Used',
+    deleteModeLabel: 'Delete mode',
+    deleteModeDesc: 'When deleting images in the Media view: move to Trash (recoverable), or delete permanently.',
+    deleteModeTrash: 'Move to Trash',
+    deleteModeDirect: 'Delete directly',
     database: (size) => `Database ${size}`,
     images: (size) => `Images ${size}`,
     total: (size) => `Total ${size}`,

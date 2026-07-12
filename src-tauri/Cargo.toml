@@ -36,6 +36,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 url = "2.5"
 fastrand = "2"
 fs4 = "1"
+trash = "5"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(unix)'.dependencies]

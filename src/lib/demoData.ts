@@ -205,6 +205,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-28T08:00:00Z',
     updated_at: '2026-06-28T08:00:00Z',
     downloaded_at: '2026-06-28T08:00:00Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_2__',
@@ -219,6 +220,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-28T08:00:01Z',
     updated_at: '2026-06-28T08:00:01Z',
     downloaded_at: '2026-06-28T08:00:01Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_3__',
@@ -233,6 +235,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-20T08:00:00Z',
     updated_at: '2026-06-20T08:00:00Z',
     downloaded_at: '2026-06-20T08:00:00Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_4__',
@@ -247,6 +250,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-10T08:00:00Z',
     updated_at: '2026-06-10T08:00:00Z',
     downloaded_at: '2026-06-10T08:00:00Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_5__',
@@ -261,6 +265,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-25T08:00:00Z',
     updated_at: '2026-06-25T08:00:00Z',
     downloaded_at: '2026-06-25T08:00:00Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_6__',
@@ -275,6 +280,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-25T08:00:01Z',
     updated_at: '2026-06-25T08:00:01Z',
     downloaded_at: '2026-06-25T08:00:01Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_7__',
@@ -289,6 +295,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-15T08:00:00Z',
     updated_at: '2026-06-15T08:00:00Z',
     downloaded_at: '2026-06-15T08:00:00Z',
+    download_error: null,
   },
   {
     id: '__demo_asset_8__',
@@ -303,6 +310,7 @@ export const DEMO_ASSETS: Asset[] = [
     created_at: '2026-06-05T08:00:00Z',
     updated_at: '2026-06-05T08:00:00Z',
     downloaded_at: '2026-06-05T08:00:00Z',
+    download_error: null,
   },
 ];
 

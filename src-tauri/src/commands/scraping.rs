@@ -312,7 +312,14 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
 
     let now = chrono::Utc::now().to_rfc3339();
     let mut saved = 0;
-    let mut hit_existing = false;
+    // Incremental early-stop is decided per *page*, not per post: we only stop
+    // paging once an ENTIRE page is already in the DB. Stopping on the first
+    // already-synced post (the old behavior) silently skipped whole date ranges,
+    // because Patreon surfaces pinned posts at the top of page 1 — an already-synced
+    // pinned post would halt the crawl before it paged back to the genuinely-new
+    // posts underneath it. Counting the page lets one such post pass through.
+    let mut post_count = 0usize;
+    let mut existing_count = 0usize;
 
     // --- Build media map ---
     // Maps included-item id -> (download_url, filename, mime_type, media_type)
@@ -328,8 +335,17 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
 
             let (dl_url, filename, mime, mtype) = match item_type {
                 "media" => {
+                    // Prefer the full-resolution URL. `download_url` is the original
+                    // file; when it's absent (e.g. newest posts / gated media) fall back
+                    // to image_urls.original (also full-res) BEFORE image_urls.default,
+                    // which is only a ~620px display preview and looks blurry enlarged.
                     let url = item.get("attributes")
-                        .and_then(|a| a.get("download_url").or_else(|| a.get("image_urls").and_then(|u| u.get("default"))))
+                        .and_then(|a| {
+                            a.get("download_url")
+                                .or_else(|| a.get("image_urls").and_then(|u| u.get("original")))
+                                .or_else(|| a.get("image_urls").and_then(|u| u.get("url")))
+                                .or_else(|| a.get("image_urls").and_then(|u| u.get("default")))
+                        })
                         .and_then(|u| u.as_str())
                         .unwrap_or("")
                         .to_string();
@@ -444,11 +460,12 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
             }
 
             if incremental {
+                post_count += 1;
                 let already_exists: bool = conn
                     .query_row("SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?1)", rusqlite::params![post_id], |r| r.get(0))
                     .unwrap_or(false);
                 if already_exists {
-                    hit_existing = true;
+                    existing_count += 1;
                 }
             }
 
@@ -495,7 +512,14 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
         }
     }
 
-    eprintln!("DEBUG: Streamed page saved {} posts to database (mode={})", saved, mode);
+    // Stop incremental paging only when the whole page was already synced.
+    // (An empty page counts as redundant so a trailing empty page ends the crawl.)
+    let hit_existing = incremental && existing_count == post_count;
+
+    eprintln!(
+        "DEBUG: Streamed page saved {} posts to database (mode={}, existing {}/{}, stop={})",
+        saved, mode, existing_count, post_count, hit_existing
+    );
 
     // Register asset metadata
     if !media_to_download.is_empty() {

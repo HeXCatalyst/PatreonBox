@@ -52,6 +52,7 @@ export interface Asset {
   created_at: string;
   updated_at: string;
   downloaded_at: string | null;
+  download_error: string | null;
 }
 
 export interface SyncRun {

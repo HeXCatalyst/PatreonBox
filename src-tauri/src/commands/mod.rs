@@ -8,6 +8,7 @@ pub mod settings;
 pub mod account;
 pub mod image_migration;
 pub mod self_check;
+pub mod download_manager;
 
 // Re-export state types for convenient access from lib.rs .manage() calls
 pub use scraping::ScrapedPostsRawState;
@@ -16,3 +17,4 @@ pub use subscriptions::ScrapedSubscriptionsState;
 pub use settings::AppSettingsState;
 pub use account::AccountInfoState;
 pub use image_migration::ImageMigrationLock;
+pub use download_manager::DownloadManagerState;

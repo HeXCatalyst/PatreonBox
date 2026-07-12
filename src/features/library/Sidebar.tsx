@@ -23,6 +23,8 @@ interface SidebarProps {
   onCreatorsUpdated: () => void;
   onDeleteCreator: (id: string) => Promise<void>;
   onOpenSettings: () => void;
+  onOpenDownloads: () => void;
+  downloadActiveCount: number;
   showStarred?: boolean;
   onSelectStarred?: () => void;
   syncingSubscriptions: boolean;
@@ -158,6 +160,7 @@ function CreatorItem({
 
 export function Sidebar({
   creators, selectedCreatorId, onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings,
+  onOpenDownloads, downloadActiveCount,
   showStarred = false, onSelectStarred, syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   demoMode = false,
 }: SidebarProps) {
@@ -314,7 +317,16 @@ export function Sidebar({
         </div>
       </ScrollArea>
 
-      <div className="p-2 border-t mt-auto space-y-2">
+      <div className="p-2 border-t mt-auto space-y-1">
+        <Button variant="ghost" className="w-full justify-start" onClick={onOpenDownloads}>
+          <DownloadCloud className="mr-2 h-4 w-4" />
+          {t.sidebar.downloads}
+          {downloadActiveCount > 0 && (
+            <span className="ml-auto text-xs font-semibold bg-primary text-primary-foreground rounded-full px-2 py-0.5 tabular-nums">
+              {downloadActiveCount}
+            </span>
+          )}
+        </Button>
         <Button variant="ghost" className="w-full justify-start" onClick={onOpenSettings}>
           <Settings className="mr-2 h-4 w-4" />
           {t.sidebar.settings}

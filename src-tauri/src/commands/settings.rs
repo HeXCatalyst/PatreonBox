@@ -11,6 +11,9 @@ fn default_asset_types() -> DownloadAssetTypes { DownloadAssetTypes::default() }
 fn default_language() -> String { "en".to_string() }
 fn default_debug_output_mode() -> String { "none".to_string() }
 fn default_migration_verify_mode() -> String { "size".to_string() }
+fn default_download_concurrency() -> u32 { 3 }
+fn default_download_retries() -> u32 { 2 }
+fn default_delete_mode() -> String { "trash".to_string() }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DownloadAssetTypes {
@@ -62,6 +65,12 @@ pub struct AppSettings {
     pub migration_verify_mode: String,  // "size" | "hash"
     #[serde(default)]
     pub demo_mode: bool,
+    #[serde(default = "default_download_concurrency")]
+    pub download_concurrency: u32,      // parallel downloads (capped 1..=5 in the UI)
+    #[serde(default = "default_download_retries")]
+    pub download_retries: u32,          // auto-retries for transient failures
+    #[serde(default = "default_delete_mode")]
+    pub delete_mode: String,            // "trash" (move to Trash) | "direct" (permanent)
 }
 
 impl Default for AppSettings {
@@ -86,6 +95,9 @@ impl Default for AppSettings {
             custom_images_dir: None,
             migration_verify_mode: "size".to_string(),
             demo_mode: false,
+            download_concurrency: 3,
+            download_retries: 2,
+            delete_mode: "trash".to_string(),
         }
     }
 }

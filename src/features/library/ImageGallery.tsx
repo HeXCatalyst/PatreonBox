@@ -25,7 +25,10 @@ export function ImageGallery({ assets, downloadedImages, imagesDir, totalCount, 
 
   const getAssetUrl = useCallback((asset: Asset) => {
     if (!imagesDir) return "";
-    return convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
+    const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
+    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
+    // full-res replacement at the same path) isn't served from WebKit's cache.
+    return asset.downloaded_at ? `${base}?v=${encodeURIComponent(asset.downloaded_at)}` : base;
   }, [imagesDir]);
 
   const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {

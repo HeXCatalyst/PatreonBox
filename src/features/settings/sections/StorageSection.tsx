@@ -170,6 +170,28 @@ export function StorageSection() {
         </div>
       </div>
 
+      <div className="flex items-center justify-between py-4 border-b gap-4">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{t.settingsStorage.deleteModeLabel}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">{t.settingsStorage.deleteModeDesc}</div>
+        </div>
+        <div className="flex gap-2 flex-shrink-0">
+          {(['trash', 'direct'] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => updateSettings({ delete_mode: mode })}
+              className={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                settings.delete_mode === mode
+                  ? 'bg-secondary border-primary text-secondary-foreground font-medium'
+                  : 'bg-background border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {mode === 'trash' ? t.settingsStorage.deleteModeTrash : t.settingsStorage.deleteModeDirect}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="flex items-center justify-between py-4 border-b">
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium">{t.settingsStorage.imagesDirLabel}</div>

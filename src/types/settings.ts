@@ -22,6 +22,9 @@ export interface AppSettings {
   custom_images_dir: string | null;
   migration_verify_mode: 'size' | 'hash';
   demo_mode: boolean;
+  download_concurrency: number;
+  download_retries: number;
+  delete_mode: 'trash' | 'direct';
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -48,4 +51,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   custom_images_dir: null,
   migration_verify_mode: 'size',
   demo_mode: false,
+  download_concurrency: 3,
+  download_retries: 2,
+  delete_mode: 'trash',
 };

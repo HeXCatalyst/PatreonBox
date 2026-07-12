@@ -15,6 +15,8 @@ import { PostList } from "./PostList";
 import { ReadingView } from "./ReadingView";
 import { MediaView } from "./MediaView";
 import { SettingsView } from "../settings/SettingsView";
+import { DownloadsView } from "../downloads/DownloadsView";
+import { useDownloadJobs } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { loadSettings } from "../../lib/settings";
 import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
@@ -65,6 +67,8 @@ interface LibraryPanesProps {
   onCreatorsUpdated: () => void;
   onDeleteCreator: (id: string) => Promise<void>;
   onOpenSettings: () => void;
+  onOpenDownloads: () => void;
+  downloadActiveCount: number;
   onSelectStarred: () => void;
   onSelectPost: (post: Post) => void;
   onSyncPosts: () => void;
@@ -93,7 +97,7 @@ function LibraryPanes({
   postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
   syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
-  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onSelectStarred,
+  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, downloadActiveCount, onSelectStarred,
   onSelectPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
   onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
   onPauseImages, onCancelImages, onToggleStar,
@@ -118,6 +122,8 @@ function LibraryPanes({
           onCreatorsUpdated={onCreatorsUpdated}
           onDeleteCreator={onDeleteCreator}
           onOpenSettings={onOpenSettings}
+          onOpenDownloads={onOpenDownloads}
+          downloadActiveCount={downloadActiveCount}
           showStarred={showStarred}
           onSelectStarred={onSelectStarred}
           syncingSubscriptions={syncingSubscriptions}
@@ -216,7 +222,8 @@ function LibraryPanes({
 }
 
 export function LibraryView() {
-  const [view, setView] = useState<'library' | 'settings'>('library');
+  const [view, setView] = useState<'library' | 'settings' | 'downloads'>('library');
+  const { jobs: downloadJobs, activeCount: downloadActiveCount, refresh: refreshDownloads } = useDownloadJobs();
   const [initialSettings, setInitialSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [creators, setCreators] = useState<(Creator & { post_count: number })[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -436,36 +443,17 @@ export function LibraryView() {
 
   // handleSyncImages must be defined before handleSyncPosts (Full mode auto-trigger)
   const handleSyncImages = async (enabledTypes?: string[]) => {
-    if (demoMode || !selectedCreatorId || syncingImagesCreatorId || migratingImages) return;
-    // Reset paused state for a fresh download
-    isImagesPausedRef.current = false;
-    setIsImagesPaused(false);
-    setImagesDoneCount(0);
-    setImageFailedCount(0);
-    setSyncingImagesCreatorId(selectedCreatorId);
-    setImageProgress(0);
-    setImageTotal(0);
+    if (demoMode || !selectedCreatorId || migratingImages) return;
+    // Enqueue into the global download manager; progress shows on the Downloads page.
     try {
-      const result = await invoke<{ success: number; failed: number }>(
-        'download_creator_images',
-        { creatorId: selectedCreatorId, enabledTypes: enabledTypes ?? null }
-      );
-      setImageFailedCount(result.failed);
-      await loadPosts();
-      await loadCreators();
-      if (selectedPost) {
-        await loadAssets(selectedPost.id);
-      }
+      await invoke<number>('start_downloads', {
+        creatorId: selectedCreatorId,
+        assetIds: null,
+        enabledTypes: enabledTypes ?? null,
+      });
+      await refreshDownloads();
     } catch (e) {
-      console.error('Failed to download images:', e);
-      throw e;
-    } finally {
-      setSyncingImagesCreatorId(null);
-      // Only reset progress display if not paused (paused = keep count for resume button)
-      if (!isImagesPausedRef.current) {
-        setImageProgress(0);
-        setImageTotal(0);
-      }
+      console.error('Failed to start downloads:', e);
     }
   };
 
@@ -685,10 +673,19 @@ export function LibraryView() {
         <div className="flex flex-1 overflow-hidden">
         {view === 'settings' ? (
           <SettingsView onClose={() => setView('library')} />
+        ) : view === 'downloads' ? (
+          <DownloadsView
+            jobs={downloadJobs}
+            onRefresh={refreshDownloads}
+            onClose={() => setView('library')}
+            creatorName={(id) => creators.find(c => c.id === id)?.name ?? id}
+          />
         ) : (
           <LibraryPanes
             creators={creators}
             posts={posts}
+            downloadActiveCount={downloadActiveCount}
+            onOpenDownloads={() => setView('downloads')}
             selectedCreatorId={selectedCreatorId}
             creatorTab={creatorTab}
             mediaOrder={mediaOrder}

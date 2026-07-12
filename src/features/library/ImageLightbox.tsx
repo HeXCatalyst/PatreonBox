@@ -65,7 +65,12 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
     return () => window.removeEventListener("wheel", handleWheel);
   }, []);
 
-  const getUrl = (asset: Asset) => convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
+  const getUrl = (asset: Asset) => {
+    const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
+    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
+    // full-res replacement at the same path) isn't served from WebKit's cache.
+    return asset.downloaded_at ? `${base}?v=${encodeURIComponent(asset.downloaded_at)}` : base;
+  };
 
   const handleOverlayMouseMove = (e: React.MouseEvent) => {
     if (!isDragging) return;

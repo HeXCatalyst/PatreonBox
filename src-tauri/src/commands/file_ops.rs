@@ -197,6 +197,49 @@ pub fn open_asset_in_system(app: AppHandle, local_path: String) -> Result<(), St
     .map_err(|e| format!("Failed to open file: {}", e))
 }
 
+/// Delete the downloaded files for the given assets and mark them as not-downloaded,
+/// so they can be re-fetched (e.g. to replace a low-res image after a re-sync). The
+/// asset/post rows stay intact. Returns how many were cleared.
+#[tauri::command]
+pub fn delete_downloaded_assets(app: AppHandle, asset_ids: Vec<String>) -> Result<usize, String> {
+    super::image_migration::check_not_migrating(&app)?;
+    if asset_ids.is_empty() { return Ok(0); }
+
+    // "trash" (default) moves files to the OS Trash/Recycle Bin; "direct" removes them.
+    let to_trash = {
+        let state = app.state::<super::settings::AppSettingsState>();
+        let s = state.0.read().unwrap_or_else(|e| e.into_inner());
+        s.delete_mode != "direct"
+    };
+
+    let conn = open_db(&app)?;
+    let mut cleared = 0usize;
+    for id in &asset_ids {
+        // Look up the file path, delete the file, then clear the download state.
+        let local_path: Option<String> = conn
+            .query_row("SELECT local_path FROM assets WHERE id = ?1", rusqlite::params![id], |r| r.get(0))
+            .ok();
+        if let Some(lp) = local_path {
+            if let Ok(full) = asset_full_path(&app, &lp) {
+                if full.exists() {
+                    if to_trash {
+                        // Fall back to a permanent delete if the file can't be trashed.
+                        if trash::delete(&full).is_err() { let _ = fs::remove_file(&full); }
+                    } else {
+                        let _ = fs::remove_file(&full);
+                    }
+                }
+            }
+        }
+        let _ = conn.execute(
+            "UPDATE assets SET downloaded_at = NULL, byte_size = NULL, download_error = NULL WHERE id = ?1",
+            rusqlite::params![id],
+        );
+        cleared += 1;
+    }
+    Ok(cleared)
+}
+
 /// Copies the bundled DisplayMode/ stock photos onto disk under
 /// images_dir()/__demo__/{creator_id}/high_res/{filename}, so Demo Mode's
 /// fictional assets (see src/lib/demoData.ts) resolve through the exact

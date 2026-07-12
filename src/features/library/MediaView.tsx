@@ -1,11 +1,13 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText } from "lucide-react";
+import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check } from "lucide-react";
 import { Asset } from "../../types/db";
 import { getCreatorMedia } from "../../lib/db";
 import { getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import { ImageLightbox } from "./ImageLightbox";
 import { useTranslation } from "../../lib/i18n";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
 const SIZE_KEY = "patreonbox-media-size";
@@ -42,6 +44,10 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const [imagesDir, setImagesDir] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [size, setSize] = useState<number>(() => {
     const stored = localStorage.getItem(SIZE_KEY);
     return stored ? parseInt(stored, 10) : DEFAULT_SIZE;
@@ -75,7 +81,45 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     };
     load();
     return () => { cancelled = true; };
-  }, [creatorId, order, demoMode]);
+  }, [creatorId, order, demoMode, reloadKey]);
+
+  // Drag-to-select: press on a cell and drag across others to paint a selection.
+  // The first cell decides the mode (add vs remove); subsequent cells follow it.
+  const paintRef = useRef<{ active: boolean; mode: "add" | "remove" }>({ active: false, mode: "add" });
+
+  const applyPaint = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (paintRef.current.mode === "add") next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const startPaint = (id: string) => {
+    paintRef.current = { active: true, mode: selected.has(id) ? "remove" : "add" };
+    applyPaint(id);
+  };
+
+  useEffect(() => {
+    const up = () => { paintRef.current.active = false; };
+    window.addEventListener("mouseup", up);
+    return () => window.removeEventListener("mouseup", up);
+  }, []);
+
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); paintRef.current.active = false; };
+
+  const handleDeleteSelected = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    try {
+      await invoke("delete_downloaded_assets", { assetIds: ids });
+    } catch (e) {
+      console.error("delete failed", e);
+    }
+    setConfirmOpen(false);
+    exitSelect();
+    setReloadKey(k => k + 1); // deleted images are no longer downloaded → drop from the wall
+  };
 
   // Reset scroll to top when the underlying media changes (new creator / re-sort).
   useEffect(() => {
@@ -111,7 +155,10 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
 
   const getUrl = useCallback((asset: Asset) => {
     if (!imagesDir) return "";
-    return convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
+    const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
+    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
+    // full-res replacement at the same path) isn't served from WebKit's cache.
+    return asset.downloaded_at ? `${base}?v=${encodeURIComponent(asset.downloaded_at)}` : base;
   }, [imagesDir]);
 
   const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -164,28 +211,56 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
           )}
         </div>
 
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <button
-            onClick={() => onOrderChange(order === "desc" ? "asc" : "desc")}
-            className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            title={order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
-          >
-            {order === "desc"
-              ? <ArrowDownWideNarrow className="h-3.5 w-3.5" />
-              : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
-            {order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
-          </button>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">{t.imageGallery.small}</span>
-            <input
-              type="range" min="80" max="400" step="8"
-              value={size}
-              onChange={handleSizeChange}
-              className="w-20 h-1 accent-primary cursor-pointer"
-            />
-            <span className="text-xs text-muted-foreground">{t.imageGallery.large}</span>
+        {selectMode ? (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-xs text-muted-foreground tabular-nums">{t.mediaView.selectedCount(selected.size)}</span>
+            <button
+              onClick={() => setConfirmOpen(true)}
+              disabled={selected.size === 0}
+              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-destructive border-destructive/50 hover:bg-destructive/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {t.mediaView.deleteSelected}
+            </button>
+            <button
+              onClick={exitSelect}
+              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+              {t.mediaView.cancel}
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <button
+              onClick={() => setSelectMode(true)}
+              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <CheckSquare className="h-3.5 w-3.5" />
+              {t.mediaView.select}
+            </button>
+            <button
+              onClick={() => onOrderChange(order === "desc" ? "asc" : "desc")}
+              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+              title={order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
+            >
+              {order === "desc"
+                ? <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
+              {order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
+            </button>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">{t.imageGallery.small}</span>
+              <input
+                type="range" min="80" max="400" step="8"
+                value={size}
+                onChange={handleSizeChange}
+                className="w-20 h-1 accent-primary cursor-pointer"
+              />
+              <span className="text-xs text-muted-foreground">{t.imageGallery.large}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Grid — virtualized: only rows near the viewport are in the DOM */}
@@ -209,22 +284,38 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
             >
               {visible.map((asset, i) => {
                 const realIdx = startIdx + i;
+                const isSelected = selected.has(asset.id);
                 return (
-                  <div key={asset.id} className="relative group bg-muted/20 rounded" style={{ aspectRatio: "1" }}>
+                  <div
+                    key={asset.id}
+                    className={`relative group bg-muted/20 rounded ${isSelected ? "ring-2 ring-primary" : ""} ${selectMode ? "select-none" : ""}`}
+                    style={{ aspectRatio: "1" }}
+                    onMouseDown={selectMode ? (e) => { e.preventDefault(); startPaint(asset.id); } : undefined}
+                    onMouseEnter={selectMode ? () => { if (paintRef.current.active) applyPaint(asset.id); } : undefined}
+                  >
                     <img
                       src={getUrl(asset)}
                       alt={asset.file_name}
-                      className="w-full h-full object-cover rounded cursor-pointer"
+                      className={`w-full h-full object-cover rounded ${selectMode ? "cursor-pointer" : "cursor-pointer"} ${isSelected ? "opacity-70" : ""}`}
                       decoding="async"
-                      onClick={() => setLightboxIndex(realIdx)}
+                      draggable={false}
+                      onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}
                     />
-                    <button
-                      className="absolute bottom-1.5 right-1.5 bg-black/50 hover:bg-black/70 rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title={t.imageGallery.saveToDownloads}
-                      onClick={e => { e.stopPropagation(); invoke("save_asset_to_downloads", { localPath: asset.local_path }).catch(console.error); }}
-                    >
-                      <Download className="h-3 w-3 text-white" />
-                    </button>
+                    {selectMode ? (
+                      <div
+                        className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center pointer-events-none ${isSelected ? "bg-primary text-primary-foreground" : "bg-black/40 border border-white/60"}`}
+                      >
+                        {isSelected && <Check className="h-3.5 w-3.5" />}
+                      </div>
+                    ) : (
+                      <button
+                        className="absolute bottom-1.5 right-1.5 bg-black/50 hover:bg-black/70 rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title={t.imageGallery.saveToDownloads}
+                        onClick={e => { e.stopPropagation(); invoke("save_asset_to_downloads", { localPath: asset.local_path }).catch(console.error); }}
+                      >
+                        <Download className="h-3 w-3 text-white" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -241,6 +332,19 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
           onClose={() => setLightboxIndex(null)}
         />
       )}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t.mediaView.deleteConfirmTitle(selected.size)}</DialogTitle>
+            <DialogDescription>{t.mediaView.deleteConfirmDesc}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>{t.common.cancel}</Button>
+            <Button variant="destructive" onClick={handleDeleteSelected}>{t.mediaView.deleteSelected}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
