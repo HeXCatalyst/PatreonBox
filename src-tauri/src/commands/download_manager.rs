@@ -19,6 +19,15 @@ pub struct DownloadJob {
     pub error: Option<String>,
 }
 
+/// Full queue state for the frontend: the job list plus whether the queue is
+/// paused (which the job rows alone can't convey — a paused queue still has
+/// "queued" jobs). Drives the animated Downloads icon's three states.
+#[derive(Clone, serde::Serialize)]
+pub struct DownloadState {
+    pub jobs: Vec<DownloadJob>,
+    pub paused: bool,
+}
+
 struct JobEntry {
     job: DownloadJob,
     source_url: String,
@@ -164,10 +173,10 @@ pub async fn start_downloads(
 }
 
 #[tauri::command]
-pub async fn get_download_state(app: AppHandle) -> Vec<DownloadJob> {
+pub async fn get_download_state(app: AppHandle) -> DownloadState {
     let mgr_arc = app.state::<DownloadManagerState>().0.clone();
     let m = mgr_arc.lock().await;
-    m.snapshot()
+    DownloadState { jobs: m.snapshot(), paused: m.paused }
 }
 
 #[tauri::command]
@@ -175,6 +184,9 @@ pub async fn pause_downloads(app: AppHandle) {
     let mgr_arc = app.state::<DownloadManagerState>().0.clone();
     let mut m = mgr_arc.lock().await;
     m.paused = true;
+    // Pause/resume don't touch job rows, so emit a dedicated event to keep the
+    // frontend's paused state (and the animated icon) in sync across views.
+    let _ = app.emit("download-paused", true);
 }
 
 #[tauri::command]
@@ -182,6 +194,7 @@ pub async fn resume_downloads(app: AppHandle) {
     let mgr_arc = app.state::<DownloadManagerState>().0.clone();
     let mut m = mgr_arc.lock().await;
     m.paused = false;
+    let _ = app.emit("download-paused", false);
     ensure_supervisor(&app, &mgr_arc, &mut m);
 }
 

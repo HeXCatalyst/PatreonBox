@@ -155,3 +155,65 @@
   border: 3px solid transparent;
   background-clip: content-box;
 }
+
+/* --- Animated Downloads sidebar icon (three states) ---
+   The mark reflects the download queue: calm when idle, an arrow dropping into
+   the cloud while downloading, and a breathing pause-bar when paused. Colors use
+   currentColor so the surrounding button's text color still applies as a base;
+   each state tints via `color`. See DownloadStatusIcon.tsx. */
+.dl-icon { width: 1rem; height: 1rem; overflow: visible; color: currentColor; }
+.dl-icon path { stroke: currentColor; }
+.dl-icon .dl-bars { display: none; }
+
+/* idle — muted, a barely-there float */
+.dl-idle { color: inherit; }
+.dl-idle .dl-arrow {
+  transform-origin: center;
+  animation: dl-float 4.5s ease-in-out infinite;
+}
+@keyframes dl-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1.4px); }
+}
+
+/* downloading — arrow drops on a loop, cloud glows */
+.dl-downloading { color: #3b82f6; }
+.dark .dl-downloading { color: #60a5fa; }
+.dark .dl-paused { color: #fbbf24; }
+.dl-downloading .dl-arrow {
+  transform-origin: center;
+  animation: dl-drop 1.15s cubic-bezier(.5, 0, .5, 1) infinite;
+}
+.dl-downloading .dl-cloud { animation: dl-glow 1.15s ease-in-out infinite; }
+@keyframes dl-drop {
+  0%   { transform: translateY(-4px); opacity: 0; }
+  28%  { opacity: 1; }
+  72%  { opacity: 1; }
+  100% { transform: translateY(4px);  opacity: 0; }
+}
+@keyframes dl-glow {
+  0%, 100% { opacity: .6; }
+  40%      { opacity: 1; }
+}
+
+/* paused — arrow becomes pause-bars, whole mark breathes */
+.dl-paused { color: #f59e0b; }
+.dl-paused .dl-arrow { display: none; }
+.dl-paused .dl-bars { display: inline; }
+.dl-paused {
+  transform-origin: center;
+  animation: dl-breathe 1.7s ease-in-out infinite;
+}
+@keyframes dl-breathe {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: .55; transform: scale(.94); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-idle .dl-arrow,
+  .dl-downloading .dl-arrow,
+  .dl-downloading .dl-cloud,
+  .dl-paused { animation: none; }
+  .dl-downloading .dl-arrow { opacity: 1; transform: none; }
+  .dl-downloading .dl-cloud { opacity: 1; }
+}

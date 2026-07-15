@@ -4,6 +4,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Settings, DownloadCloud, Loader2, Search, Pin, GripVertical, Star } from "lucide-react";
+import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
+import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
@@ -25,6 +27,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
   downloadActiveCount: number;
+  downloadStatus: DownloadStatus;
   showStarred?: boolean;
   onSelectStarred?: () => void;
   syncingSubscriptions: boolean;
@@ -160,7 +163,7 @@ function CreatorItem({
 
 export function Sidebar({
   creators, selectedCreatorId, onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings,
-  onOpenDownloads, downloadActiveCount,
+  onOpenDownloads, downloadActiveCount, downloadStatus,
   showStarred = false, onSelectStarred, syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   demoMode = false,
 }: SidebarProps) {
@@ -319,7 +322,7 @@ export function Sidebar({
 
       <div className="p-2 border-t mt-auto space-y-1">
         <Button variant="ghost" className="w-full justify-start" onClick={onOpenDownloads}>
-          <DownloadCloud className="mr-2 h-4 w-4" />
+          <DownloadStatusIcon status={downloadStatus} className="mr-2" />
           {t.sidebar.downloads}
           {downloadActiveCount > 0 && (
             <span className="ml-auto text-xs font-semibold bg-primary text-primary-foreground rounded-full px-2 py-0.5 tabular-nums">

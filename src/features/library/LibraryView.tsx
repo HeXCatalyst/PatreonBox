@@ -16,7 +16,7 @@ import { ReadingView } from "./ReadingView";
 import { MediaView } from "./MediaView";
 import { SettingsView } from "../settings/SettingsView";
 import { DownloadsView } from "../downloads/DownloadsView";
-import { useDownloadJobs } from "../downloads/useDownloadJobs";
+import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { loadSettings } from "../../lib/settings";
 import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
@@ -69,6 +69,7 @@ interface LibraryPanesProps {
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
   downloadActiveCount: number;
+  downloadStatus: DownloadStatus;
   onSelectStarred: () => void;
   onSelectPost: (post: Post) => void;
   onSyncPosts: () => void;
@@ -97,7 +98,7 @@ function LibraryPanes({
   postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
   syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
-  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, downloadActiveCount, onSelectStarred,
+  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, downloadActiveCount, downloadStatus, onSelectStarred,
   onSelectPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
   onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
   onPauseImages, onCancelImages, onToggleStar,
@@ -124,6 +125,7 @@ function LibraryPanes({
           onOpenSettings={onOpenSettings}
           onOpenDownloads={onOpenDownloads}
           downloadActiveCount={downloadActiveCount}
+          downloadStatus={downloadStatus}
           showStarred={showStarred}
           onSelectStarred={onSelectStarred}
           syncingSubscriptions={syncingSubscriptions}
@@ -223,7 +225,7 @@ function LibraryPanes({
 
 export function LibraryView() {
   const [view, setView] = useState<'library' | 'settings' | 'downloads'>('library');
-  const { jobs: downloadJobs, activeCount: downloadActiveCount, refresh: refreshDownloads } = useDownloadJobs();
+  const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, refresh: refreshDownloads } = useDownloadJobs();
   const [initialSettings, setInitialSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [creators, setCreators] = useState<(Creator & { post_count: number })[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -685,6 +687,7 @@ export function LibraryView() {
             creators={creators}
             posts={posts}
             downloadActiveCount={downloadActiveCount}
+            downloadStatus={downloadStatus}
             onOpenDownloads={() => setView('downloads')}
             selectedCreatorId={selectedCreatorId}
             creatorTab={creatorTab}
