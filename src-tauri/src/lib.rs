@@ -217,6 +217,12 @@ pub fn run() {
             commands::download_manager::retry_download,
             commands::download_manager::retry_all_failed,
             commands::download_manager::clear_completed_downloads,
+            commands::sync_history::get_sync_runs,
+            commands::sync_history::clear_sync_runs,
+            commands::sync_history::get_unseen_failed_count,
+            commands::sync_history::mark_sync_runs_seen,
+            commands::search::search_posts,
+            commands::search::rebuild_search_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

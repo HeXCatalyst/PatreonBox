@@ -16,8 +16,10 @@ import { ReadingView } from "./ReadingView";
 import { MediaView } from "./MediaView";
 import { SettingsView } from "../settings/SettingsView";
 import { DownloadsView } from "../downloads/DownloadsView";
+import { SearchView, type SearchResult } from "../search/SearchView";
 import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
+import { useUnseenSyncFailures } from "./hooks/useUnseenSyncFailures";
 import { loadSettings } from "../../lib/settings";
 import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import type { AppSettings } from "../../types/settings";
@@ -68,8 +70,10 @@ interface LibraryPanesProps {
   onDeleteCreator: (id: string) => Promise<void>;
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
+  onOpenSearch: () => void;
   downloadActiveCount: number;
   downloadStatus: DownloadStatus;
+  settingsErrorCount: number;
   onSelectStarred: () => void;
   onSelectPost: (post: Post) => void;
   onSyncPosts: () => void;
@@ -98,7 +102,7 @@ function LibraryPanes({
   postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
   syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
-  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, downloadActiveCount, downloadStatus, onSelectStarred,
+  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, onOpenSearch, downloadActiveCount, downloadStatus, settingsErrorCount, onSelectStarred,
   onSelectPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
   onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
   onPauseImages, onCancelImages, onToggleStar,
@@ -124,8 +128,10 @@ function LibraryPanes({
           onDeleteCreator={onDeleteCreator}
           onOpenSettings={onOpenSettings}
           onOpenDownloads={onOpenDownloads}
+          onOpenSearch={onOpenSearch}
           downloadActiveCount={downloadActiveCount}
           downloadStatus={downloadStatus}
+          settingsErrorCount={settingsErrorCount}
           showStarred={showStarred}
           onSelectStarred={onSelectStarred}
           syncingSubscriptions={syncingSubscriptions}
@@ -224,8 +230,14 @@ function LibraryPanes({
 }
 
 export function LibraryView() {
-  const [view, setView] = useState<'library' | 'settings' | 'downloads'>('library');
+  const [view, setView] = useState<'library' | 'settings' | 'downloads' | 'search'>('library');
+  const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'history'>('account');
   const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, refresh: refreshDownloads } = useDownloadJobs();
+  const { unseenFailures } = useUnseenSyncFailures();
+  // A search result to open: remembered until the target creator's posts load,
+  // then resolved to the actual Post (the creator-change effect clears any prior
+  // selection first, so we can't set the post synchronously here).
+  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
   const [initialSettings, setInitialSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [creators, setCreators] = useState<(Creator & { post_count: number })[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -656,6 +668,31 @@ export function LibraryView() {
     setSelectedPostAssets(data);
   }
 
+  // Once a search result's creator is selected and its posts have loaded, open
+  // the specific post it pointed at.
+  useEffect(() => {
+    if (!pendingPostId) return;
+    const post = posts.find(p => p.id === pendingPostId);
+    if (post) {
+      setSelectedPost(post);
+      setPendingPostId(null);
+    }
+  }, [posts, pendingPostId]);
+
+  const handleOpenSearchResult = (result: SearchResult) => {
+    setShowStarred(false);
+    setSearchQuery("");
+    setSelectedCreatorId(result.creator_id);
+    setPendingPostId(result.post_id);
+    setView('library');
+  };
+
+  const handleOpenSettings = () => {
+    // Land directly on Sync History when there are unseen sync failures.
+    setSettingsInitialSection(unseenFailures > 0 ? 'history' : 'account');
+    setView('settings');
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background text-foreground">
@@ -674,7 +711,7 @@ export function LibraryView() {
         )}
         <div className="flex flex-1 overflow-hidden">
         {view === 'settings' ? (
-          <SettingsView onClose={() => setView('library')} />
+          <SettingsView onClose={() => setView('library')} initialSection={settingsInitialSection} />
         ) : view === 'downloads' ? (
           <DownloadsView
             jobs={downloadJobs}
@@ -682,13 +719,20 @@ export function LibraryView() {
             onClose={() => setView('library')}
             creatorName={(id) => creators.find(c => c.id === id)?.name ?? id}
           />
+        ) : view === 'search' ? (
+          <SearchView
+            onClose={() => setView('library')}
+            onOpenResult={handleOpenSearchResult}
+          />
         ) : (
           <LibraryPanes
             creators={creators}
             posts={posts}
             downloadActiveCount={downloadActiveCount}
             downloadStatus={downloadStatus}
+            settingsErrorCount={unseenFailures}
             onOpenDownloads={() => setView('downloads')}
+            onOpenSearch={() => setView('search')}
             selectedCreatorId={selectedCreatorId}
             creatorTab={creatorTab}
             mediaOrder={mediaOrder}
@@ -719,7 +763,7 @@ export function LibraryView() {
             onSelectCreator={handleSelectCreator}
             onCreatorsUpdated={loadCreators}
             onDeleteCreator={handleDeleteCreator}
-            onOpenSettings={() => setView('settings')}
+            onOpenSettings={handleOpenSettings}
             onSelectStarred={handleSelectStarred}
             onSelectPost={setSelectedPost}
             onSyncPosts={handleSyncPosts}

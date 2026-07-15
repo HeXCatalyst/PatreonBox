@@ -86,6 +86,11 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
     let incremental = incremental.unwrap_or(false);
     eprintln!("DEBUG: scrape_creator_posts called for {} (id: {}, max: {}, mode: {}, resume: {:?}, incremental: {})", creator_url, creator_id, limit, mode, resume_cursor, incremental);
 
+    // Open a Sync History run (best-effort). posts_imported is derived as the
+    // after-minus-before post-count delta, so it must be sampled before scraping.
+    let run_id = super::sync_history::start_run(&app, &creator_id);
+    let posts_before = super::sync_history::creator_post_count(&app, &creator_id);
+
     // Clear previous post results
     {
         let state = app.state::<ScrapedPostsRawState>();
@@ -277,6 +282,9 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
 
             close_window(&app, "post-scraper");
 
+            let posts_after = super::sync_history::creator_post_count(&app, &creator_id);
+            super::sync_history::finish_run(&app, &run_id, "success", 1, (posts_after - posts_before).max(0), None);
+
             // Emit sync-complete so frontend can automatically refresh the post list
             use tauri::Emitter;
             let _ = app.emit("sync-complete", serde_json::json!({ "creator_id": creator_id }));
@@ -287,7 +295,9 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
 
     close_window(&app, "post-scraper");
 
-    Err("Post API scraping timed out after 120 seconds.".to_string())
+    let msg = "Post API scraping timed out after 120 seconds.".to_string();
+    super::sync_history::finish_run(&app, &run_id, "failed", 1, 0, Some(msg.clone()));
+    Err(msg)
 }
 
 fn derive_media_type(mime: &str) -> &'static str {

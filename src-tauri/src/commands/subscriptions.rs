@@ -21,6 +21,9 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
 
     eprintln!("DEBUG: scrape_subscriptions command called from React");
 
+    // Open a Sync History run for this subscription scan (best-effort).
+    let run_id = super::sync_history::start_run(&app, super::sync_history::SUBSCRIPTIONS_KEY);
+
     // Clear any previous scrape results
     {
         let state = app.state::<ScrapedSubscriptionsState>();
@@ -256,6 +259,7 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
             // Close the scraper window (mutex already dropped)
             close_window(&app, "subscription-scraper");
 
+            super::sync_history::finish_run(&app, &run_id, "success", count as i64, 0, None);
             return Ok(creators);
         }
 
@@ -276,7 +280,9 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
     // Timeout — close the window
     close_window(&app, "subscription-scraper");
 
-    Err("Scraping timed out after 30 seconds. Please try again.".to_string())
+    let msg = "Scraping timed out after 30 seconds. Please try again.".to_string();
+    super::sync_history::finish_run(&app, &run_id, "failed", 0, 0, Some(msg.clone()));
+    Err(msg)
 }
 
 #[tauri::command]

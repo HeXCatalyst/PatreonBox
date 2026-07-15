@@ -20,6 +20,7 @@ export interface Translations {
     subscriptionsHeading: (count: number) => string;
     settings: string;
     downloads: string;
+    search: string;
     unpin: string;
     pin: string;
     delete: string;
@@ -163,7 +164,33 @@ export interface Translations {
     language: string;
     about: string;
     developer: string;
+    history: string;
     backToLibrary: string;
+  };
+  settingsHistory: {
+    heading: string;
+    desc: string;
+    empty: string;
+    clearButton: string;
+    rebuildIndexLabel: string;
+    rebuildIndexDesc: string;
+    rebuildButton: string;
+    rebuildDone: string;
+    subscriptionsTarget: string;
+    postsImported: (n: number) => string;
+    creatorsScanned: (n: number) => string;
+    statusRunning: string;
+    statusSuccess: string;
+    statusFailed: string;
+    statusCancelled: string;
+    statusInterrupted: string;
+  };
+  search: {
+    placeholder: string;
+    heading: string;
+    empty: string;
+    noResults: (q: string) => string;
+    resultsCount: (n: number) => string;
   };
   settingsAccount: {
     heading: string;
@@ -292,6 +319,7 @@ const zh: Translations = {
     subscriptionsHeading: (count) => `订阅 (${count})`,
     settings: '设置(Settings)',
     downloads: '下载',
+    search: '搜索',
     unpin: '取消置顶',
     pin: '置顶',
     delete: '删除',
@@ -435,7 +463,33 @@ const zh: Translations = {
     language: '语言(Language)',
     about: '关于',
     developer: '开发者模式',
+    history: '同步历史',
     backToLibrary: '返回库',
+  },
+  settingsHistory: {
+    heading: '同步历史',
+    desc: '每次同步的运行记录。数据可随时清空，不影响已抓取的帖子。',
+    empty: '还没有同步记录。',
+    clearButton: '清空历史',
+    rebuildIndexLabel: '搜索索引',
+    rebuildIndexDesc: '重建全局搜索索引（仅索引，帖子数据不受影响）。',
+    rebuildButton: '重建索引',
+    rebuildDone: '已重建',
+    subscriptionsTarget: '全部订阅',
+    postsImported: (n) => `+${n} 帖子`,
+    creatorsScanned: (n) => `${n} 位创作者`,
+    statusRunning: '进行中',
+    statusSuccess: '成功',
+    statusFailed: '失败',
+    statusCancelled: '已取消',
+    statusInterrupted: '已中断',
+  },
+  search: {
+    placeholder: '搜索所有帖子…',
+    heading: '搜索',
+    empty: '输入关键词，搜索所有创作者的帖子标题和正文。',
+    noResults: (q) => `没有匹配「${q}」的帖子。`,
+    resultsCount: (n) => `${n} 条结果`,
   },
   settingsAccount: {
     heading: '账号',
@@ -564,6 +618,7 @@ const en: Translations = {
     subscriptionsHeading: (count) => `Subscriptions (${count})`,
     settings: 'Settings',
     downloads: 'Downloads',
+    search: 'Search',
     unpin: 'Unpin',
     pin: 'Pin',
     delete: 'Delete',
@@ -707,7 +762,33 @@ const en: Translations = {
     language: 'Language',
     about: 'About',
     developer: 'Developer Mode',
+    history: 'Sync History',
     backToLibrary: 'Back to Library',
+  },
+  settingsHistory: {
+    heading: 'Sync History',
+    desc: 'A log of each sync run. Safe to clear anytime — scraped posts are untouched.',
+    empty: 'No sync runs yet.',
+    clearButton: 'Clear history',
+    rebuildIndexLabel: 'Search index',
+    rebuildIndexDesc: 'Rebuild the global search index (index only — post data is untouched).',
+    rebuildButton: 'Rebuild index',
+    rebuildDone: 'Rebuilt',
+    subscriptionsTarget: 'All subscriptions',
+    postsImported: (n) => `+${n} posts`,
+    creatorsScanned: (n) => `${n} creators`,
+    statusRunning: 'Running',
+    statusSuccess: 'Success',
+    statusFailed: 'Failed',
+    statusCancelled: 'Cancelled',
+    statusInterrupted: 'Interrupted',
+  },
+  search: {
+    placeholder: 'Search all posts…',
+    heading: 'Search',
+    empty: 'Type to search post titles and content across all creators.',
+    noResults: (q) => `No posts match "${q}".`,
+    resultsCount: (n) => `${n} results`,
   },
   settingsAccount: {
     heading: 'Account',

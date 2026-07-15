@@ -8,14 +8,16 @@ import { LanguageSection } from "./sections/LanguageSection";
 import { AboutSection } from "./sections/AboutSection";
 import { AccountSection } from "./sections/AccountSection";
 import { DeveloperModeSection } from "./sections/DeveloperModeSection";
+import { SyncHistorySection } from "./sections/SyncHistorySection";
 import { useTranslation } from "../../lib/i18n";
 import { useSettings } from "./SettingsContext";
 
-type Section = 'account' | 'sync' | 'network' | 'storage' | 'appearance' | 'language' | 'about' | 'developer';
+type Section = 'account' | 'sync' | 'history' | 'network' | 'storage' | 'appearance' | 'language' | 'about' | 'developer';
 
 const SECTION_MAP: Record<Section, React.ComponentType> = {
   account:    AccountSection,
   sync:       SyncSection,
+  history:    SyncHistorySection,
   network:    NetworkSection,
   storage:    StorageSection,
   appearance: AppearanceSection,
@@ -26,12 +28,13 @@ const SECTION_MAP: Record<Section, React.ComponentType> = {
 
 interface SettingsViewProps {
   onClose: () => void;
+  initialSection?: Section;
 }
 
-export function SettingsView({ onClose }: SettingsViewProps) {
+export function SettingsView({ onClose, initialSection = 'account' }: SettingsViewProps) {
   const t = useTranslation();
   const { settings } = useSettings();
-  const [activeSection, setActiveSection] = useState<Section>('account');
+  const [activeSection, setActiveSection] = useState<Section>(initialSection);
   const ActiveComponent = SECTION_MAP[activeSection];
   const developerModeEnabled = settings.developer_mode_enabled;
 
@@ -48,6 +51,7 @@ export function SettingsView({ onClose }: SettingsViewProps) {
   const NAV_ITEMS: { key: Section; label: string; icon: string }[] = [
     { key: 'account',    label: t.settingsNav.account,    icon: '👤' },
     { key: 'sync',       label: t.settingsNav.sync,       icon: '⬇' },
+    { key: 'history',    label: t.settingsNav.history,    icon: '🕘' },
     { key: 'network',    label: t.settingsNav.network,    icon: '🌐' },
     { key: 'storage',    label: t.settingsNav.storage,    icon: '💾' },
     { key: 'appearance', label: t.settingsNav.appearance, icon: '🎨' },

@@ -26,8 +26,10 @@ interface SidebarProps {
   onDeleteCreator: (id: string) => Promise<void>;
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
+  onOpenSearch: () => void;
   downloadActiveCount: number;
   downloadStatus: DownloadStatus;
+  settingsErrorCount: number;
   showStarred?: boolean;
   onSelectStarred?: () => void;
   syncingSubscriptions: boolean;
@@ -163,7 +165,7 @@ function CreatorItem({
 
 export function Sidebar({
   creators, selectedCreatorId, onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings,
-  onOpenDownloads, downloadActiveCount, downloadStatus,
+  onOpenDownloads, onOpenSearch, downloadActiveCount, downloadStatus, settingsErrorCount,
   showStarred = false, onSelectStarred, syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   demoMode = false,
 }: SidebarProps) {
@@ -321,6 +323,10 @@ export function Sidebar({
       </ScrollArea>
 
       <div className="p-2 border-t mt-auto space-y-1">
+        <Button variant="ghost" className="w-full justify-start" onClick={onOpenSearch}>
+          <Search className="mr-2 h-4 w-4" />
+          {t.sidebar.search}
+        </Button>
         <Button variant="ghost" className="w-full justify-start" onClick={onOpenDownloads}>
           <DownloadStatusIcon status={downloadStatus} className="mr-2" />
           {t.sidebar.downloads}
@@ -333,6 +339,12 @@ export function Sidebar({
         <Button variant="ghost" className="w-full justify-start" onClick={onOpenSettings}>
           <Settings className="mr-2 h-4 w-4" />
           {t.sidebar.settings}
+          {settingsErrorCount > 0 && (
+            <span
+              className="ml-auto h-2 w-2 rounded-full bg-destructive"
+              title={t.settingsHistory.statusFailed}
+            />
+          )}
         </Button>
       </div>
     </div>

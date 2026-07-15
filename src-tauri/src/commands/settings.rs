@@ -71,6 +71,8 @@ pub struct AppSettings {
     pub download_retries: u32,          // auto-retries for transient failures
     #[serde(default = "default_delete_mode")]
     pub delete_mode: String,            // "trash" (move to Trash) | "direct" (permanent)
+    #[serde(default)]
+    pub last_seen_sync_runs_at: String, // RFC3339 stamp; failed runs after it show the sidebar error dot
 }
 
 impl Default for AppSettings {
@@ -98,6 +100,7 @@ impl Default for AppSettings {
             download_concurrency: 3,
             download_retries: 2,
             delete_mode: "trash".to_string(),
+            last_seen_sync_runs_at: String::new(),
         }
     }
 }
