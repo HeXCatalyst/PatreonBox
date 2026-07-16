@@ -26,6 +26,13 @@ export function AppearanceSection() {
     }
   }, [settings.theme, settings.color_theme]);
 
+  // Character themes are still experimental (Nightwolf especially needs polish),
+  // so they only appear when developer mode is on. Default is always available,
+  // and the currently-selected theme stays visible so nobody gets stuck on one.
+  const visibleThemes = settings.developer_mode_enabled
+    ? COLOR_THEMES
+    : COLOR_THEMES.filter(ct => ct === 'default' || ct === settings.color_theme);
+
   return (
     <div>
       <h2 className="text-xl font-semibold mb-6">{t.settingsAppearance.heading}</h2>
@@ -54,7 +61,7 @@ export function AppearanceSection() {
         <div className="text-sm font-medium mb-1">{t.settingsAppearance.colorThemeLabel}</div>
         <div className="text-xs text-muted-foreground mb-3">{t.settingsAppearance.colorThemeDesc}</div>
         <div className="flex flex-wrap gap-2">
-          {COLOR_THEMES.map(ct => (
+          {visibleThemes.map(ct => (
             <button
               key={ct}
               onClick={() => updateSettings({ color_theme: ct })}
