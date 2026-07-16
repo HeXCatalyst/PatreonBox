@@ -195,6 +195,17 @@ export interface Translations {
   workbench: {
     flipHint: string;
   };
+  commandPalette: {
+    placeholder: string;
+    groupCreators: string;
+    groupPosts: string;
+    groupCommands: string;
+    empty: string;
+    cmdSyncAll: string;
+    cmdDownloads: string;
+    cmdSettings: string;
+    cmdSearch: string;
+  };
   settingsAccount: {
     heading: string;
     creator: string;
@@ -501,6 +512,17 @@ const zh: Translations = {
   workbench: {
     flipHint: '← → 翻页',
   },
+  commandPalette: {
+    placeholder: '跳转创作者、搜索帖子、执行命令…',
+    groupCreators: '创作者',
+    groupPosts: '帖子',
+    groupCommands: '命令',
+    empty: '没有匹配项',
+    cmdSyncAll: '同步所有订阅',
+    cmdDownloads: '打开下载',
+    cmdSettings: '打开设置',
+    cmdSearch: '打开搜索',
+  },
   settingsAccount: {
     heading: '账号',
     creator: '创作者',
@@ -806,6 +828,17 @@ const en: Translations = {
   },
   workbench: {
     flipHint: '← → to flip',
+  },
+  commandPalette: {
+    placeholder: 'Jump to a creator, search posts, run a command…',
+    groupCreators: 'Creators',
+    groupPosts: 'Posts',
+    groupCommands: 'Commands',
+    empty: 'No matches',
+    cmdSyncAll: 'Sync all subscriptions',
+    cmdDownloads: 'Open Downloads',
+    cmdSettings: 'Open Settings',
+    cmdSearch: 'Open Search',
   },
   settingsAccount: {
     heading: 'Account',

@@ -18,6 +18,7 @@ import { SettingsView } from "../settings/SettingsView";
 import { DownloadsView } from "../downloads/DownloadsView";
 import { SearchView, type SearchResult } from "../search/SearchView";
 import { WorkbenchView } from "../workbench/WorkbenchView";
+import { CommandPalette, type PaletteCommand } from "../command/CommandPalette";
 import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { useUnseenSyncFailures } from "./hooks/useUnseenSyncFailures";
@@ -257,6 +258,7 @@ function LibraryPanes({
 export function LibraryView() {
   const [view, setView] = useState<'library' | 'settings' | 'downloads' | 'search'>('library');
   const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'history'>('account');
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, refresh: refreshDownloads } = useDownloadJobs();
   const { unseenFailures } = useUnseenSyncFailures();
   // A search result to open: remembered until the target creator's posts load,
@@ -718,6 +720,32 @@ export function LibraryView() {
     setView('settings');
   };
 
+  // ⌘K / Ctrl-K opens the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const paletteCommands: PaletteCommand[] = [
+    { id: 'sync-all', label: t.commandPalette.cmdSyncAll, run: () => handleSyncSubscriptions() },
+    { id: 'search', label: t.commandPalette.cmdSearch, run: () => setView('search') },
+    { id: 'downloads', label: t.commandPalette.cmdDownloads, run: () => setView('downloads') },
+    { id: 'settings', label: t.commandPalette.cmdSettings, run: handleOpenSettings },
+  ];
+
+  const handlePaletteSelectCreator = (id: string) => {
+    setShowStarred(false);
+    setSearchQuery("");
+    setSelectedCreatorId(id);
+    setView('library');
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background text-foreground">
@@ -729,6 +757,14 @@ export function LibraryView() {
   return (
     <SettingsProvider initial={initialSettings}>
       <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          creators={creators}
+          commands={paletteCommands}
+          onSelectCreator={handlePaletteSelectCreator}
+          onOpenPost={handleOpenSearchResult}
+        />
         {syncingSubscriptions && (
           <div className="w-full bg-blue-600 text-white text-sm text-center py-1.5 flex-shrink-0">
             {t.sidebar.syncBannerWarning}
