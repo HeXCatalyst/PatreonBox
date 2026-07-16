@@ -19,6 +19,7 @@ import { DownloadsView } from "../downloads/DownloadsView";
 import { SearchView, type SearchResult } from "../search/SearchView";
 import { WorkbenchView } from "../workbench/WorkbenchView";
 import { CommandPalette, type PaletteCommand } from "../command/CommandPalette";
+import { applyTheme } from "../../lib/theme";
 import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { useUnseenSyncFailures } from "./hooks/useUnseenSyncFailures";
@@ -322,10 +323,8 @@ export function LibraryView() {
         setDemoMode(settings.demo_mode);
         setMaxPosts(settings.default_max_posts);
         setSyncMode(settings.default_sync_mode as 'normal' | 'full');
-        // Apply theme immediately so there's no flash
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const isDark = settings.theme === 'dark' || (settings.theme === 'system' && prefersDark);
-        document.documentElement.classList.toggle('dark', isDark);
+        // Apply theme + color theme immediately so there's no flash
+        applyTheme(settings.theme, settings.color_theme);
         if (settings.demo_mode) {
           setCreators(DEMO_CREATORS);
         } else {

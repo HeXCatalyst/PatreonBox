@@ -217,3 +217,104 @@
   .dl-downloading .dl-arrow { opacity: 1; transform: none; }
   .dl-downloading .dl-cloud { opacity: 1; }
 }
+
+/* =========================================================================
+   Named color themes (Settings → Appearance). Each overrides the shadcn
+   tokens. Reading Room + Nightwolf are dark-committed (applyTheme forces
+   `.dark`); Dhole + Azure Fox also define a light variant. Accents pulled
+   from the theme mockups; see docs plan 2026-07-16-reading-room-shell.
+   ========================================================================= */
+
+/* --- Reading Room (warm ember, dark-committed) --- */
+.dark[data-color-theme="reading-room"] {
+  --background:#1d1813; --foreground:#ece3d4;
+  --card:#26201a; --card-foreground:#ece3d4;
+  --popover:#2a231b; --popover-foreground:#ece3d4;
+  --primary:#e8964a; --primary-foreground:#241505;
+  --secondary:#2f2820; --secondary-foreground:#ece3d4;
+  --muted:#2a231b; --muted-foreground:#a89a86;
+  --accent:#3a2c1e; --accent-foreground:#f2e4d2;
+  --border:rgba(255,238,214,.10); --input:rgba(255,238,214,.16); --ring:#e8964a;
+  --sidebar:#15110d; --sidebar-foreground:#ece3d4;
+  --sidebar-primary:#e8964a; --sidebar-primary-foreground:#241505;
+  --sidebar-accent:#2f2820; --sidebar-accent-foreground:#ece3d4;
+  --sidebar-border:rgba(255,238,214,.09); --sidebar-ring:#e8964a;
+}
+
+/* --- Nightwolf (charcoal + acid lime, dark-committed) --- */
+.dark[data-color-theme="nightwolf"] {
+  --background:#1d211f; --foreground:#e7ece3;
+  --card:#252a27; --card-foreground:#e7ece3;
+  --popover:#2a302c; --popover-foreground:#e7ece3;
+  --primary:#c3e84a; --primary-foreground:#161a18;
+  --secondary:#2e3431; --secondary-foreground:#e7ece3;
+  --muted:#282e2b; --muted-foreground:#97a099;
+  --accent:#2b332a; --accent-foreground:#eaf2df;
+  --border:rgba(195,232,74,.10); --input:rgba(195,232,74,.18); --ring:#c3e84a;
+  --sidebar:#161a18; --sidebar-foreground:#e7ece3;
+  --sidebar-primary:#c3e84a; --sidebar-primary-foreground:#161a18;
+  --sidebar-accent:#2b332a; --sidebar-accent-foreground:#eaf2df;
+  --sidebar-border:rgba(195,232,74,.10); --sidebar-ring:#c3e84a;
+}
+
+/* --- Dhole (amber/rust) — dark --- */
+.dark[data-color-theme="dhole"] {
+  --background:#271b12; --foreground:#efe3cd;
+  --card:#33251a; --card-foreground:#efe3cd;
+  --popover:#3a2a1d; --popover-foreground:#efe3cd;
+  --primary:#eaa62f; --primary-foreground:#241505;
+  --secondary:#3e2d20; --secondary-foreground:#efe3cd;
+  --muted:#352619; --muted-foreground:#b8a483;
+  --accent:#42301f; --accent-foreground:#f3e6cf;
+  --border:rgba(240,216,164,.10); --input:rgba(240,216,164,.18); --ring:#eaa62f;
+  --sidebar:#1e140e; --sidebar-foreground:#efe3cd;
+  --sidebar-primary:#eaa62f; --sidebar-primary-foreground:#241505;
+  --sidebar-accent:#3e2d20; --sidebar-accent-foreground:#efe3cd;
+  --sidebar-border:rgba(240,216,164,.10); --sidebar-ring:#eaa62f;
+}
+/* --- Dhole — light --- */
+:root[data-color-theme="dhole"]:not(.dark) {
+  --background:#efe0be; --foreground:#33241a;
+  --card:#f7edd7; --card-foreground:#33241a;
+  --popover:#f7edd7; --popover-foreground:#33241a;
+  --primary:#bd5527; --primary-foreground:#fff5e9;
+  --secondary:#e9dcc0; --secondary-foreground:#33241a;
+  --muted:#e9dcbf; --muted-foreground:#6e5b43;
+  --accent:#ecd9a9; --accent-foreground:#33241a;
+  --border:rgba(58,40,26,.14); --input:rgba(58,40,26,.20); --ring:#bd5527;
+  --sidebar:#e6cf9c; --sidebar-foreground:#33241a;
+  --sidebar-primary:#bd5527; --sidebar-primary-foreground:#fff5e9;
+  --sidebar-accent:#ecd9a9; --sidebar-accent-foreground:#33241a;
+  --sidebar-border:rgba(58,40,26,.14); --sidebar-ring:#bd5527;
+}
+
+/* --- Azure Fox (navy/gold) — dark --- */
+.dark[data-color-theme="azure-fox"] {
+  --background:#1b2742; --foreground:#eaf1fb;
+  --card:#23314f; --card-foreground:#eaf1fb;
+  --popover:#28375a; --popover-foreground:#eaf1fb;
+  --primary:#f0c33a; --primary-foreground:#17233c;
+  --secondary:#2d3d5d; --secondary-foreground:#eaf1fb;
+  --muted:#26344f; --muted-foreground:#9aabc8;
+  --accent:#2b3c5e; --accent-foreground:#eef4fb;
+  --border:rgba(180,205,255,.10); --input:rgba(180,205,255,.18); --ring:#f0c33a;
+  --sidebar:#141d33; --sidebar-foreground:#eaf1fb;
+  --sidebar-primary:#f0c33a; --sidebar-primary-foreground:#17233c;
+  --sidebar-accent:#2b3c5e; --sidebar-accent-foreground:#eaf1fb;
+  --sidebar-border:rgba(180,205,255,.10); --sidebar-ring:#f0c33a;
+}
+/* --- Azure Fox — light (frost) --- */
+:root[data-color-theme="azure-fox"]:not(.dark) {
+  --background:#e7eff8; --foreground:#1b2a45;
+  --card:#f4f8fd; --card-foreground:#1b2a45;
+  --popover:#f4f8fd; --popover-foreground:#1b2a45;
+  --primary:#c68912; --primary-foreground:#ffffff;
+  --secondary:#dde8f5; --secondary-foreground:#1b2a45;
+  --muted:#dfe9f5; --muted-foreground:#556a8c;
+  --accent:#dbe8f6; --accent-foreground:#1b2a45;
+  --border:rgba(28,42,68,.12); --input:rgba(28,42,68,.20); --ring:#c68912;
+  --sidebar:#d7e3f1; --sidebar-foreground:#1b2a45;
+  --sidebar-primary:#c68912; --sidebar-primary-foreground:#ffffff;
+  --sidebar-accent:#dbe8f6; --sidebar-accent-foreground:#1b2a45;
+  --sidebar-border:rgba(28,42,68,.12); --sidebar-ring:#c68912;
+}

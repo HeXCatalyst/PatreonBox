@@ -26,6 +26,7 @@ export interface AppSettings {
   download_retries: number;
   delete_mode: 'trash' | 'direct';
   layout_mode: 'classic' | 'workbench';
+  color_theme: 'default' | 'reading-room' | 'dhole' | 'nightwolf' | 'azure-fox';
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -56,4 +57,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   download_retries: 2,
   delete_mode: 'trash',
   layout_mode: 'classic',
+  color_theme: 'default',
 };

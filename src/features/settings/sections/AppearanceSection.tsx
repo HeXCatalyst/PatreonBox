@@ -1,27 +1,30 @@
 import { useEffect } from "react";
 import { useSettings } from "../SettingsContext";
 import { useTranslation } from "../../../lib/i18n";
+import { applyTheme, COLOR_THEMES, type ColorTheme } from "../../../lib/theme";
 
-function applyTheme(theme: 'dark' | 'light' | 'system') {
-  const html = document.documentElement;
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const isDark = theme === 'dark' || (theme === 'system' && prefersDark);
-  html.classList.toggle('dark', isDark);
-}
+// Ground + accent chips shown on each theme button.
+const THEME_SWATCHES: Record<ColorTheme, string[]> = {
+  'default':      ['#9ca3af', '#27272a'],
+  'reading-room': ['#26201a', '#e8964a'],
+  'dhole':        ['#33251a', '#eaa62f', '#b5522a'],
+  'nightwolf':    ['#252a27', '#c3e84a', '#3f8291'],
+  'azure-fox':    ['#23314f', '#f0c33a', '#4a9bd8'],
+};
 
 export function AppearanceSection() {
   const { settings, updateSettings } = useSettings();
   const t = useTranslation();
 
   useEffect(() => {
-    applyTheme(settings.theme);
+    applyTheme(settings.theme, settings.color_theme);
     if (settings.theme === 'system') {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
-      const handler = () => applyTheme('system');
+      const handler = () => applyTheme('system', settings.color_theme);
       mq.addEventListener('change', handler);
       return () => mq.removeEventListener('change', handler);
     }
-  }, [settings.theme]);
+  }, [settings.theme, settings.color_theme]);
 
   return (
     <div>
@@ -42,6 +45,31 @@ export function AppearanceSection() {
               }`}
             >
               {theme === 'dark' ? t.settingsAppearance.dark : theme === 'light' ? t.settingsAppearance.light : t.settingsAppearance.system}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="py-4 border-b">
+        <div className="text-sm font-medium mb-1">{t.settingsAppearance.colorThemeLabel}</div>
+        <div className="text-xs text-muted-foreground mb-3">{t.settingsAppearance.colorThemeDesc}</div>
+        <div className="flex flex-wrap gap-2">
+          {COLOR_THEMES.map(ct => (
+            <button
+              key={ct}
+              onClick={() => updateSettings({ color_theme: ct })}
+              className={`flex items-center gap-2 px-3 py-2 text-sm rounded border transition-colors ${
+                settings.color_theme === ct
+                  ? 'bg-secondary border-primary text-secondary-foreground font-medium'
+                  : 'bg-background border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <span className="flex -space-x-1" aria-hidden>
+                {THEME_SWATCHES[ct].map((c, i) => (
+                  <span key={i} className="h-3.5 w-3.5 rounded-full ring-1 ring-black/20" style={{ backgroundColor: c }} />
+                ))}
+              </span>
+              {t.settingsAppearance.themeName(ct)}
             </button>
           ))}
         </div>

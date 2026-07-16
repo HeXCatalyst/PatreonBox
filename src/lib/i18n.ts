@@ -232,6 +232,9 @@ export interface Translations {
     layoutDesc: string;
     layoutClassic: string;
     layoutWorkbench: string;
+    colorThemeLabel: string;
+    colorThemeDesc: string;
+    themeName: (ct: string) => string;
   };
   settingsNetwork: {
     heading: string;
@@ -549,6 +552,9 @@ const zh: Translations = {
     layoutDesc: '经典三栏,或工作台(侧边导航栏 + 阅读画布 + 底部作品胶片条)。',
     layoutClassic: '经典三栏',
     layoutWorkbench: '工作台',
+    colorThemeLabel: '配色主题',
+    colorThemeDesc: '为整个应用换一套配色。角色主题(阅读室、豺、暗夜狼、蓝狐)各有固定风格;豺与蓝狐支持明/暗。',
+    themeName: (ct) => (({ 'default': '默认', 'reading-room': '阅读室', 'dhole': '豺 Dhole', 'nightwolf': '暗夜狼', 'azure-fox': '蓝狐' } as Record<string, string>)[ct] ?? ct),
   },
   settingsNetwork: {
     heading: '网络 / 代理',
@@ -866,6 +872,9 @@ const en: Translations = {
     layoutDesc: 'Classic three panes, or Workbench (icon rail + reading canvas + a filmstrip dock of the creator’s posts).',
     layoutClassic: 'Classic 3-pane',
     layoutWorkbench: 'Workbench',
+    colorThemeLabel: 'Color theme',
+    colorThemeDesc: 'Recolor the whole app. Character themes (Reading Room, Dhole, Nightwolf, Azure Fox) each have a committed look; Dhole and Azure Fox support light/dark.',
+    themeName: (ct) => (({ 'default': 'Default', 'reading-room': 'Reading Room', 'dhole': 'Dhole', 'nightwolf': 'Nightwolf', 'azure-fox': 'Azure Fox' } as Record<string, string>)[ct] ?? ct),
   },
   settingsNetwork: {
     heading: 'Network / Proxy',
