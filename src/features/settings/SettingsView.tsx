@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import {
+  ChevronLeft, UserRound, RefreshCw, History, Globe, HardDrive,
+  Palette, Languages, Info, Wrench, type LucideIcon,
+} from "lucide-react";
 import { SyncSection } from "./sections/SyncSection";
 import { NetworkSection } from "./sections/NetworkSection";
 import { StorageSection } from "./sections/StorageSection";
@@ -48,17 +51,17 @@ export function SettingsView({ onClose, initialSection = 'account' }: SettingsVi
     }
   }, [activeSection, developerModeEnabled]);
 
-  const NAV_ITEMS: { key: Section; label: string; icon: string }[] = [
-    { key: 'account',    label: t.settingsNav.account,    icon: '👤' },
-    { key: 'sync',       label: t.settingsNav.sync,       icon: '⬇' },
-    { key: 'history',    label: t.settingsNav.history,    icon: '🕘' },
-    { key: 'network',    label: t.settingsNav.network,    icon: '🌐' },
-    { key: 'storage',    label: t.settingsNav.storage,    icon: '💾' },
-    { key: 'appearance', label: t.settingsNav.appearance, icon: '🎨' },
-    { key: 'language',   label: t.settingsNav.language,   icon: '🔤' },
-    { key: 'about',      label: t.settingsNav.about,      icon: 'ℹ' },
+  const NAV_ITEMS: { key: Section; label: string; icon: LucideIcon }[] = [
+    { key: 'account',    label: t.settingsNav.account,    icon: UserRound },
+    { key: 'sync',       label: t.settingsNav.sync,       icon: RefreshCw },
+    { key: 'history',    label: t.settingsNav.history,    icon: History },
+    { key: 'network',    label: t.settingsNav.network,    icon: Globe },
+    { key: 'storage',    label: t.settingsNav.storage,    icon: HardDrive },
+    { key: 'appearance', label: t.settingsNav.appearance, icon: Palette },
+    { key: 'language',   label: t.settingsNav.language,   icon: Languages },
+    { key: 'about',      label: t.settingsNav.about,      icon: Info },
     ...(developerModeEnabled
-      ? [{ key: 'developer' as Section, label: t.settingsNav.developer, icon: '🛠' }]
+      ? [{ key: 'developer' as Section, label: t.settingsNav.developer, icon: Wrench }]
       : []),
   ];
 
@@ -86,7 +89,7 @@ export function SettingsView({ onClose, initialSection = 'account' }: SettingsVi
                   : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
               }`}
             >
-              <span>{item.icon}</span>
+              <item.icon className="h-4 w-4 flex-shrink-0" />
               {item.label}
             </button>
           ))}

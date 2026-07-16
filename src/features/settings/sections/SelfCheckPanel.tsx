@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
+import { CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { useTranslation } from "../../../lib/i18n";
 
 interface CheckResult {
@@ -8,10 +9,18 @@ interface CheckResult {
   detail: string;
 }
 
+// Plain-text markers for the copy-to-clipboard bug-report format only;
+// the UI renders the lucide icons below.
 const STATUS_ICON: Record<CheckResult["status"], string> = {
   pass: "✅",
   warn: "⚠️",
   fail: "❌",
+};
+
+const STATUS_LUCIDE: Record<CheckResult["status"], React.ReactNode> = {
+  pass: <CheckCircle2 className="h-4 w-4 text-green-500" />,
+  warn: <AlertTriangle className="h-4 w-4 text-amber-500" />,
+  fail: <XCircle className="h-4 w-4 text-destructive" />,
 };
 
 /** Serialize results to a plain-text block for pasting into a bug report. */
@@ -80,7 +89,7 @@ export function SelfCheckPanel() {
         <div className="mt-4 space-y-1.5">
           {results.map(r => (
             <div key={r.id} className="flex items-start gap-2 text-sm">
-              <span className="leading-5">{STATUS_ICON[r.status]}</span>
+              <span className="mt-0.5 flex-shrink-0">{STATUS_LUCIDE[r.status]}</span>
               <div className="min-w-0">
                 <span className="font-medium">{checkTitle(r.id)}</span>
                 <span className="text-xs text-muted-foreground font-mono break-all"> — {r.detail}</span>

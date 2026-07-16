@@ -1,7 +1,10 @@
 import { useEffect } from "react";
+import { Moon, Sun, Monitor } from "lucide-react";
 import { useSettings } from "../SettingsContext";
 import { useTranslation } from "../../../lib/i18n";
 import { applyTheme, COLOR_THEMES, type ColorTheme } from "../../../lib/theme";
+
+const MODE_ICONS = { dark: Moon, light: Sun, system: Monitor } as const;
 
 // Ground + accent chips shown on each theme button.
 const THEME_SWATCHES: Record<ColorTheme, string[]> = {
@@ -41,19 +44,23 @@ export function AppearanceSection() {
         <div className="text-sm font-medium mb-1">{t.settingsAppearance.themeLabel}</div>
         <div className="text-xs text-muted-foreground mb-3">{t.settingsAppearance.themeDesc}</div>
         <div className="flex gap-2">
-          {(['dark', 'light', 'system'] as const).map(theme => (
-            <button
-              key={theme}
-              onClick={() => updateSettings({ theme })}
-              className={`px-4 py-2 text-sm rounded border transition-colors ${
-                settings.theme === theme
-                  ? 'bg-secondary border-primary text-secondary-foreground font-medium'
-                  : 'bg-background border-border text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {theme === 'dark' ? t.settingsAppearance.dark : theme === 'light' ? t.settingsAppearance.light : t.settingsAppearance.system}
-            </button>
-          ))}
+          {(['dark', 'light', 'system'] as const).map(theme => {
+            const ModeIcon = MODE_ICONS[theme];
+            return (
+              <button
+                key={theme}
+                onClick={() => updateSettings({ theme })}
+                className={`inline-flex items-center gap-2 px-4 py-2 text-sm rounded border transition-colors ${
+                  settings.theme === theme
+                    ? 'bg-secondary border-primary text-secondary-foreground font-medium'
+                    : 'bg-background border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <ModeIcon className="h-4 w-4" />
+                {theme === 'dark' ? t.settingsAppearance.dark : theme === 'light' ? t.settingsAppearance.light : t.settingsAppearance.system}
+              </button>
+            );
+          })}
         </div>
       </div>
 
