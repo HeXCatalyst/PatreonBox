@@ -47,6 +47,26 @@ export function AppearanceSection() {
         </div>
       </div>
 
+      <div className="py-4 border-b">
+        <div className="text-sm font-medium mb-1">{t.settingsAppearance.layoutLabel}</div>
+        <div className="text-xs text-muted-foreground mb-3">{t.settingsAppearance.layoutDesc}</div>
+        <div className="flex gap-2">
+          {(['classic', 'workbench'] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => updateSettings({ layout_mode: mode })}
+              className={`px-4 py-2 text-sm rounded border transition-colors ${
+                settings.layout_mode === mode
+                  ? 'bg-secondary border-primary text-secondary-foreground font-medium'
+                  : 'bg-background border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {mode === 'classic' ? t.settingsAppearance.layoutClassic : t.settingsAppearance.layoutWorkbench}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="py-4">
         <div className="text-sm font-medium mb-1">{t.settingsAppearance.panelWidthLabel}</div>
         <div className="text-xs text-muted-foreground mb-3">

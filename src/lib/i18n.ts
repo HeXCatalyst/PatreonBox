@@ -192,6 +192,9 @@ export interface Translations {
     noResults: (q: string) => string;
     resultsCount: (n: number) => string;
   };
+  workbench: {
+    flipHint: string;
+  };
   settingsAccount: {
     heading: string;
     creator: string;
@@ -214,6 +217,10 @@ export interface Translations {
     panelWidthLabel: string;
     panelWidthValue: (sidebar: number, postList: number) => string;
     restoreDefault: string;
+    layoutLabel: string;
+    layoutDesc: string;
+    layoutClassic: string;
+    layoutWorkbench: string;
   };
   settingsNetwork: {
     heading: string;
@@ -491,6 +498,9 @@ const zh: Translations = {
     noResults: (q) => `没有匹配「${q}」的帖子。`,
     resultsCount: (n) => `${n} 条结果`,
   },
+  workbench: {
+    flipHint: '← → 翻页',
+  },
   settingsAccount: {
     heading: '账号',
     creator: '创作者',
@@ -513,6 +523,10 @@ const zh: Translations = {
     panelWidthLabel: '面板宽度',
     panelWidthValue: (sidebar, postList) => `侧栏 ${sidebar}px · 帖子列表 ${postList}px`,
     restoreDefault: '恢复默认宽度',
+    layoutLabel: '布局',
+    layoutDesc: '经典三栏,或工作台(侧边导航栏 + 阅读画布 + 底部作品胶片条)。',
+    layoutClassic: '经典三栏',
+    layoutWorkbench: '工作台',
   },
   settingsNetwork: {
     heading: '网络 / 代理',
@@ -790,6 +804,9 @@ const en: Translations = {
     noResults: (q) => `No posts match "${q}".`,
     resultsCount: (n) => `${n} results`,
   },
+  workbench: {
+    flipHint: '← → to flip',
+  },
   settingsAccount: {
     heading: 'Account',
     creator: 'Creator',
@@ -812,6 +829,10 @@ const en: Translations = {
     panelWidthLabel: 'Panel Width',
     panelWidthValue: (sidebar, postList) => `Sidebar ${sidebar}px · Post list ${postList}px`,
     restoreDefault: 'Restore Default Width',
+    layoutLabel: 'Layout',
+    layoutDesc: 'Classic three panes, or Workbench (icon rail + reading canvas + a filmstrip dock of the creator’s posts).',
+    layoutClassic: 'Classic 3-pane',
+    layoutWorkbench: 'Workbench',
   },
   settingsNetwork: {
     heading: 'Network / Proxy',

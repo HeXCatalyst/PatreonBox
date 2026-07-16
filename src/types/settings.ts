@@ -25,6 +25,7 @@ export interface AppSettings {
   download_concurrency: number;
   download_retries: number;
   delete_mode: 'trash' | 'direct';
+  layout_mode: 'classic' | 'workbench';
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -54,4 +55,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   download_concurrency: 3,
   download_retries: 2,
   delete_mode: 'trash',
+  layout_mode: 'classic',
 };

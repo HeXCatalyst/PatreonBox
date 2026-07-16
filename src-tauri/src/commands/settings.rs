@@ -14,6 +14,7 @@ fn default_migration_verify_mode() -> String { "size".to_string() }
 fn default_download_concurrency() -> u32 { 3 }
 fn default_download_retries() -> u32 { 2 }
 fn default_delete_mode() -> String { "trash".to_string() }
+fn default_layout_mode() -> String { "classic".to_string() }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DownloadAssetTypes {
@@ -73,6 +74,8 @@ pub struct AppSettings {
     pub delete_mode: String,            // "trash" (move to Trash) | "direct" (permanent)
     #[serde(default)]
     pub last_seen_sync_runs_at: String, // RFC3339 stamp; failed runs after it show the sidebar error dot
+    #[serde(default = "default_layout_mode")]
+    pub layout_mode: String,            // "classic" (3-pane) | "workbench" (rail + canvas + dock)
 }
 
 impl Default for AppSettings {
@@ -101,6 +104,7 @@ impl Default for AppSettings {
             download_retries: 2,
             delete_mode: "trash".to_string(),
             last_seen_sync_runs_at: String::new(),
+            layout_mode: "classic".to_string(),
         }
     }
 }

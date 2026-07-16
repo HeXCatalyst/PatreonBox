@@ -17,6 +17,7 @@ import { MediaView } from "./MediaView";
 import { SettingsView } from "../settings/SettingsView";
 import { DownloadsView } from "../downloads/DownloadsView";
 import { SearchView, type SearchResult } from "../search/SearchView";
+import { WorkbenchView } from "../workbench/WorkbenchView";
 import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { useUnseenSyncFailures } from "./hooks/useUnseenSyncFailures";
@@ -116,6 +117,30 @@ function LibraryPanes({
     setSidebarWidth(settings.sidebar_width);
     setPostListWidth(settings.post_list_width);
   }, [settings.sidebar_width, settings.post_list_width]);
+
+  // Workbench layout: a rail + reading canvas + filmstrip dock replaces the
+  // classic three panes. Everything else (settings/downloads/search views) is
+  // handled a level up in LibraryView, so this only swaps the library body.
+  if (settings.layout_mode === 'workbench') {
+    return (
+      <WorkbenchView
+        creators={creators}
+        selectedCreatorId={selectedCreatorId}
+        onSelectCreator={onSelectCreator}
+        posts={posts}
+        selectedPost={selectedPost}
+        selectedPostAssets={selectedPostAssets}
+        onSelectPost={onSelectPost}
+        onToggleStar={onToggleStar}
+        onOpenSearch={onOpenSearch}
+        onOpenDownloads={onOpenDownloads}
+        onOpenSettings={onOpenSettings}
+        downloadStatus={downloadStatus}
+        downloadActiveCount={downloadActiveCount}
+        settingsErrorCount={settingsErrorCount}
+      />
+    );
+  }
 
   return (
     <>
