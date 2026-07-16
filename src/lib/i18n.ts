@@ -194,6 +194,8 @@ export interface Translations {
   };
   workbench: {
     flipHint: string;
+    zen: string;
+    zenExit: string;
   };
   timeline: {
     heading: string;
@@ -520,6 +522,8 @@ const zh: Translations = {
   },
   workbench: {
     flipHint: '← → 翻页',
+    zen: '专注阅读',
+    zenExit: '返回',
   },
   timeline: {
     heading: '全部动态',
@@ -846,6 +850,8 @@ const en: Translations = {
   },
   workbench: {
     flipHint: '← → to flip',
+    zen: 'Zen',
+    zenExit: 'Back',
   },
   timeline: {
     heading: 'All activity',

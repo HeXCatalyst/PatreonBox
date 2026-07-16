@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, Maximize2 } from "lucide-react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Creator, Post, Asset } from "../../types/db";
 import { getCreatorMedia } from "../../lib/db";
@@ -45,6 +46,7 @@ export function WorkbenchView({
   const [imagesDir, setImagesDir] = useState("");
   const [media, setMedia] = useState<Asset[]>([]);
   const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
+  const [zen, setZen] = useState(false);
 
   // Selecting a creator (from the rail) always returns to the Workbench home.
   const selectCreator = (id: string) => { setHome('workbench'); onSelectCreator(id); };
@@ -86,13 +88,17 @@ export function WorkbenchView({
     if (selectedCreatorId && !selectedPost && posts.length > 0) onSelectPost(posts[0]);
   }, [selectedCreatorId, posts, selectedPost, onSelectPost]);
 
-  // ← / → flip through the current creator's posts.
+  // Keyboard: Esc exits Zen, F toggles it, ← / → flip through the creator's posts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       const el = e.target as HTMLElement;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      if (posts.length === 0) return;
+      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (e.key === "Escape" && zen) { setZen(false); return; }
+      if (e.key.toLowerCase() === "f" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && selectedPost) {
+        e.preventDefault(); setZen(z => !z); return;
+      }
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (typing || posts.length === 0) return;
       const idx = selectedPost ? posts.findIndex(p => p.id === selectedPost.id) : -1;
       const next = e.key === "ArrowRight"
         ? Math.min(posts.length - 1, idx + 1)
@@ -101,9 +107,28 @@ export function WorkbenchView({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [posts, selectedPost, onSelectPost]);
+  }, [posts, selectedPost, onSelectPost, zen]);
 
   const creatorName = creators.find(c => c.id === selectedCreatorId)?.name ?? "";
+
+  // Zen: chrome falls away, the page centers. Esc or the Back chip returns;
+  // ← → still flip through posts while reading.
+  if (zen && selectedPost) {
+    return (
+      <div className="flex-1 h-full relative overflow-hidden bg-background">
+        <button
+          onClick={() => setZen(false)}
+          className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground bg-card/80 backdrop-blur-sm border rounded-full px-3 py-1.5"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          {t.workbench.zenExit}
+        </button>
+        <div className="h-full max-w-3xl mx-auto">
+          <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-1 h-full overflow-hidden">
@@ -127,7 +152,17 @@ export function WorkbenchView({
         <TimelineView onOpenInWorkbench={(post) => { setHome('workbench'); onOpenPost(post.creator_id, post.id); }} />
       ) : (
         <div className="flex-1 flex flex-col min-w-0 h-full">
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-hidden relative">
+            {selectedPost && (
+              <button
+                onClick={() => setZen(true)}
+                title={`${t.workbench.zen} · F`}
+                className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground bg-card/80 backdrop-blur-sm border rounded-full px-3 py-1.5"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                {t.workbench.zen}
+              </button>
+            )}
             <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
           </div>
           {selectedCreatorId && posts.length > 0 && (
