@@ -223,9 +223,9 @@ export function Sidebar({
   const normalCreators = visibleCreators.filter(c => !Boolean(c.is_pinned));
 
   return (
-    <div className="w-full bg-muted/30 flex flex-col h-full">
+    <div className="w-full bg-sidebar flex flex-col h-full">
       <div className="p-4 border-b flex items-center justify-between">
-        <h1 className="font-semibold tracking-tight">PatreonBOX</h1>
+        <h1 className="font-serif text-lg font-semibold tracking-tight">PatreonBOX</h1>
         <Button variant="ghost" size="icon" title={t.sidebar.syncSubscriptionsTooltip} onClick={onSyncSubscriptions} disabled={syncingSubscriptions}>
           {syncingSubscriptions ? <Loader2 className="h-4 w-4 animate-spin" /> : <DownloadCloud className="h-4 w-4" />}
         </Button>
@@ -267,7 +267,7 @@ export function Sidebar({
             className="w-full justify-start px-3 h-9 text-sm"
             onClick={() => { onSelectStarred?.(); setSearch(""); }}
           >
-            <Star className={`h-4 w-4 mr-2 ${showStarred ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`} />
+            <Star className={`h-4 w-4 mr-2 ${showStarred ? "fill-star text-star" : "text-muted-foreground"}`} />
             {t.sidebar.starred}
           </Button>
 

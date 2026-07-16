@@ -224,12 +224,12 @@ export function PostList({
       <div className="p-4 border-b space-y-3 z-10 bg-background">
         {showStarred ? (
           <div className="flex items-center gap-2 pb-1">
-            <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+            <Star className="h-4 w-4 fill-star text-star" />
             <span className="font-semibold text-sm">{t.postList.starredHeading(posts.length)}</span>
           </div>
         ) : selectedCreator && (
           <div className="flex items-center justify-between pb-1 gap-1.5 flex-wrap">
-            <h2 className="font-semibold truncate pr-1 min-w-0">{selectedCreator.name}</h2>
+            <h2 className="font-serif text-lg font-semibold truncate pr-1 min-w-0">{selectedCreator.name}</h2>
 
             {/* Posts | Media view toggle */}
             <div className="h-7 flex items-center border rounded text-xs bg-background overflow-hidden flex-shrink-0">
@@ -492,12 +492,12 @@ export function PostList({
                 }`}
               >
                 <div className="flex justify-between items-start mb-1">
-                  <h3 className="font-medium line-clamp-2 leading-tight flex-1 pr-2">
+                  <h3 className="font-serif text-[15px] font-semibold line-clamp-2 leading-snug flex-1 pr-2">
                     {post.title}
                   </h3>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {post.read_state === 'unread' && (
-                      <span className="h-2 w-2 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
+                      <span className="h-2 w-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
                     )}
                     {onToggleStar && (
                       <button
@@ -510,7 +510,7 @@ export function PostList({
                         <Star
                           className={`h-3.5 w-3.5 transition-colors ${
                             post.is_starred
-                              ? "fill-amber-400 text-amber-400"
+                              ? "fill-star text-star"
                               : "text-muted-foreground opacity-40 hover:opacity-70"
                           }`}
                         />

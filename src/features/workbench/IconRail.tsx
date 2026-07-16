@@ -38,7 +38,7 @@ export function IconRail({
   const ordered = [...pinned, ...rest];
 
   return (
-    <div className="w-full h-full bg-muted/30 border-r flex flex-col items-center py-3 gap-2">
+    <div className="w-full h-full bg-sidebar border-r flex flex-col items-center py-3 gap-2">
       <div className="h-8 w-8 rounded-lg bg-primary/15 text-primary grid place-items-center mb-1" title="PatreonBOX">
         <DownloadStatusIcon status={downloadStatus} />
       </div>

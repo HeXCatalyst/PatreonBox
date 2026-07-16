@@ -43,7 +43,7 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
 
   if (!post) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-background text-muted-foreground text-center">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-card text-muted-foreground text-center">
         <div className="bg-muted h-16 w-16 min-h-16 min-w-16 rounded-full flex items-center justify-center mb-4">
           <ImageIcon className="h-8 w-8 opacity-50" />
         </div>
@@ -79,11 +79,11 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   const downloadedImages = imageAssets.filter(a => a.downloaded_at !== null);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative">
+    <div className="flex-1 flex flex-col h-full bg-card overflow-hidden relative">
       <ScrollArea className="flex-1">
         <div className="p-8 max-w-3xl mx-auto w-full">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold mb-4 leading-tight">{post.title}</h1>
+            <h1 className="font-serif text-3xl font-bold mb-4 leading-tight break-words [text-wrap:balance]">{post.title}</h1>
             
             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{post.creator_name}</span>
@@ -111,7 +111,7 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
                   <Star
                     className={`h-4 w-4 ${
                       post.is_starred
-                        ? "fill-amber-400 text-amber-400"
+                        ? "fill-star text-star"
                         : "text-muted-foreground opacity-50"
                     }`}
                   />
@@ -123,7 +123,7 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
           <Separator className="mb-8" />
           
           {(post.content_rendered_html || post.content_raw) ? (
-            <div className="prose prose-sm dark:prose-invert max-w-none mb-12"
+            <div className="prose prose-base dark:prose-invert max-w-none mb-12 font-serif leading-relaxed [--tw-prose-links:var(--link)] [--tw-prose-invert-links:var(--link)]"
               dangerouslySetInnerHTML={{ __html: post.content_rendered_html || post.content_raw! }}
             />
           ) : (
