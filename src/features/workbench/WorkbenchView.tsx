@@ -5,6 +5,7 @@ import { getCreatorMedia } from "../../lib/db";
 import { ReadingView } from "../library/ReadingView";
 import { IconRail } from "./IconRail";
 import { FilmstripDock } from "./FilmstripDock";
+import { TimelineView } from "./TimelineView";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
 
@@ -16,6 +17,7 @@ interface WorkbenchViewProps {
   selectedPost: Post | null;
   selectedPostAssets: Asset[];
   onSelectPost: (post: Post) => void;
+  onOpenPost: (creatorId: string, postId: string) => void;
   onToggleStar?: (post: Post, newStarred: boolean) => void;
   onOpenSearch: () => void;
   onOpenDownloads: () => void;
@@ -35,13 +37,17 @@ const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
  */
 export function WorkbenchView({
   creators, selectedCreatorId, onSelectCreator,
-  posts, selectedPost, selectedPostAssets, onSelectPost, onToggleStar,
+  posts, selectedPost, selectedPostAssets, onSelectPost, onOpenPost, onToggleStar,
   onOpenSearch, onOpenDownloads, onOpenSettings,
   downloadStatus, downloadActiveCount, settingsErrorCount,
 }: WorkbenchViewProps) {
   const t = useTranslation();
   const [imagesDir, setImagesDir] = useState("");
   const [media, setMedia] = useState<Asset[]>([]);
+  const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
+
+  // Selecting a creator (from the rail) always returns to the Workbench home.
+  const selectCreator = (id: string) => { setHome('workbench'); onSelectCreator(id); };
 
   useEffect(() => {
     invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
@@ -104,32 +110,38 @@ export function WorkbenchView({
       <div className="w-[60px] flex-shrink-0 h-full">
         <IconRail
           creators={creators}
-          selectedCreatorId={selectedCreatorId}
-          onSelectCreator={onSelectCreator}
+          selectedCreatorId={home === 'timeline' ? null : selectedCreatorId}
+          onSelectCreator={selectCreator}
           onOpenSearch={onOpenSearch}
           onOpenDownloads={onOpenDownloads}
           onOpenSettings={onOpenSettings}
+          onOpenTimeline={() => setHome('timeline')}
+          timelineActive={home === 'timeline'}
           downloadStatus={downloadStatus}
           downloadActiveCount={downloadActiveCount}
           settingsErrorCount={settingsErrorCount}
         />
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0 h-full">
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
+      {home === 'timeline' ? (
+        <TimelineView onOpenInWorkbench={(post) => { setHome('workbench'); onOpenPost(post.creator_id, post.id); }} />
+      ) : (
+        <div className="flex-1 flex flex-col min-w-0 h-full">
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
+          </div>
+          {selectedCreatorId && posts.length > 0 && (
+            <FilmstripDock
+              posts={posts}
+              selectedPostId={selectedPost?.id ?? null}
+              onSelect={onSelectPost}
+              thumbFor={thumbFor}
+              title={creatorName ? `${creatorName} · ${posts.length}` : String(posts.length)}
+              hint={t.workbench.flipHint}
+            />
+          )}
         </div>
-        {selectedCreatorId && posts.length > 0 && (
-          <FilmstripDock
-            posts={posts}
-            selectedPostId={selectedPost?.id ?? null}
-            onSelect={onSelectPost}
-            thumbFor={thumbFor}
-            title={creatorName ? `${creatorName} · ${posts.length}` : String(posts.length)}
-            hint={t.workbench.flipHint}
-          />
-        )}
-      </div>
+      )}
     </div>
   );
 }

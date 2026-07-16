@@ -79,6 +79,7 @@ interface LibraryPanesProps {
   settingsErrorCount: number;
   onSelectStarred: () => void;
   onSelectPost: (post: Post) => void;
+  onOpenPost: (creatorId: string, postId: string) => void;
   onSyncPosts: () => void;
   onClearData: () => Promise<void>;
   onSyncImages: (enabledTypes?: string[]) => Promise<void>;
@@ -106,7 +107,7 @@ function LibraryPanes({
   syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
   onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, onOpenSearch, downloadActiveCount, downloadStatus, settingsErrorCount, onSelectStarred,
-  onSelectPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
+  onSelectPost, onOpenPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
   onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
   onPauseImages, onCancelImages, onToggleStar,
   onTierChange, onDatePresetChange, onDateRangeChange,
@@ -133,6 +134,7 @@ function LibraryPanes({
         selectedPost={selectedPost}
         selectedPostAssets={selectedPostAssets}
         onSelectPost={onSelectPost}
+        onOpenPost={onOpenPost}
         onToggleStar={onToggleStar}
         onOpenSearch={onOpenSearch}
         onOpenDownloads={onOpenDownloads}
@@ -705,13 +707,17 @@ export function LibraryView() {
     }
   }, [posts, pendingPostId]);
 
-  const handleOpenSearchResult = (result: SearchResult) => {
+  // Navigate to a specific post: select its creator and remember the post id;
+  // the resolver effect above opens it once that creator's posts have loaded.
+  const handleOpenPost = (creatorId: string, postId: string) => {
     setShowStarred(false);
     setSearchQuery("");
-    setSelectedCreatorId(result.creator_id);
-    setPendingPostId(result.post_id);
+    setSelectedCreatorId(creatorId);
+    setPendingPostId(postId);
     setView('library');
   };
+
+  const handleOpenSearchResult = (result: SearchResult) => handleOpenPost(result.creator_id, result.post_id);
 
   const handleOpenSettings = () => {
     // Land directly on Sync History when there are unseen sync failures.
@@ -826,6 +832,7 @@ export function LibraryView() {
             onOpenSettings={handleOpenSettings}
             onSelectStarred={handleSelectStarred}
             onSelectPost={setSelectedPost}
+            onOpenPost={handleOpenPost}
             onSyncPosts={handleSyncPosts}
             onClearData={handleClearData}
             onSyncImages={handleSyncImages}

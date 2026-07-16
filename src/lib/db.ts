@@ -153,6 +153,24 @@ export async function getPostAssets(postId: string): Promise<Asset[]> {
   return db.select("SELECT * FROM assets WHERE post_id = ? ORDER BY created_at ASC", [postId]);
 }
 
+/**
+ * Recent posts across ALL subscribed creators, newest first — powers the
+ * Timeline ("all activity") view. Capped by `limit` (most-recent window) to keep
+ * the river light; pagination can extend it later.
+ */
+export async function getAllPostsChrono(limit = 300): Promise<Post[]> {
+  const db = await getDb();
+  return db.select(
+    `SELECT p.*, c.name as creator_name, c.avatar_path as creator_avatar_path
+     FROM posts p
+     JOIN creators c ON p.creator_id = c.id
+     WHERE c.is_subscribed = 1
+     ORDER BY p.published_at DESC, p.created_at DESC
+     LIMIT ?`,
+    [limit],
+  );
+}
+
 const MEDIA_IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
 
 /**

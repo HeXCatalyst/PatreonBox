@@ -195,6 +195,12 @@ export interface Translations {
   workbench: {
     flipHint: string;
   };
+  timeline: {
+    heading: string;
+    empty: string;
+    pick: string;
+    openInWorkbench: string;
+  };
   commandPalette: {
     placeholder: string;
     groupCreators: string;
@@ -515,6 +521,12 @@ const zh: Translations = {
   workbench: {
     flipHint: '← → 翻页',
   },
+  timeline: {
+    heading: '全部动态',
+    empty: '还没有帖子。',
+    pick: '从左侧选择一条帖子阅读。',
+    openInWorkbench: '在工作台打开',
+  },
   commandPalette: {
     placeholder: '跳转创作者、搜索帖子、执行命令…',
     groupCreators: '创作者',
@@ -834,6 +846,12 @@ const en: Translations = {
   },
   workbench: {
     flipHint: '← → to flip',
+  },
+  timeline: {
+    heading: 'All activity',
+    empty: 'No posts yet.',
+    pick: 'Pick an entry on the left to read.',
+    openInWorkbench: 'Open in workbench',
   },
   commandPalette: {
     placeholder: 'Jump to a creator, search posts, run a command…',

@@ -1,7 +1,7 @@
 import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Settings } from "lucide-react";
+import { Search, Settings, History } from "lucide-react";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
@@ -13,6 +13,8 @@ interface IconRailProps {
   onOpenSearch: () => void;
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
+  onOpenTimeline: () => void;
+  timelineActive: boolean;
   downloadStatus: DownloadStatus;
   downloadActiveCount: number;
   settingsErrorCount: number;
@@ -25,7 +27,7 @@ interface IconRailProps {
  */
 export function IconRail({
   creators, selectedCreatorId, onSelectCreator,
-  onOpenSearch, onOpenDownloads, onOpenSettings,
+  onOpenSearch, onOpenDownloads, onOpenSettings, onOpenTimeline, timelineActive,
   downloadStatus, downloadActiveCount, settingsErrorCount,
 }: IconRailProps) {
   const t = useTranslation();
@@ -40,6 +42,16 @@ export function IconRail({
       <div className="h-8 w-8 rounded-lg bg-primary/15 text-primary grid place-items-center mb-1" title="PatreonBOX">
         <DownloadStatusIcon status={downloadStatus} />
       </div>
+
+      <button
+        onClick={onOpenTimeline}
+        title={t.timeline.heading}
+        className={`h-9 w-9 grid place-items-center rounded-lg transition-colors mb-1 ${
+          timelineActive ? "bg-accent text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        }`}
+      >
+        <History className="h-4 w-4" />
+      </button>
 
       <ScrollArea className="flex-1 w-full">
         <div className="flex flex-col items-center gap-2 py-1">
