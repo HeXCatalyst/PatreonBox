@@ -67,7 +67,7 @@ function SortableCreatorItem({
             onClick={() => onSelect(creator.id)}
           >
             <Pin className="h-3 w-3 text-muted-foreground flex-shrink-0 mr-1" />
-            <Avatar className="h-6 w-6 mr-2 flex-shrink-0">
+            <Avatar className="h-6 w-6 mr-2 flex-shrink-0 creator-avatar">
               <AvatarImage src={creator.avatar_path || undefined} />
               <AvatarFallback>{creator.name.charAt(0)}</AvatarFallback>
             </Avatar>
@@ -113,7 +113,7 @@ function CreatorItem({
             className="w-full justify-start h-auto py-2 px-2"
             onClick={() => onSelect(creator.id)}
           >
-            <Avatar className="h-6 w-6 mr-2 flex-shrink-0">
+            <Avatar className="h-6 w-6 mr-2 flex-shrink-0 creator-avatar">
               <AvatarImage src={creator.avatar_path || undefined} />
               <AvatarFallback>{creator.name.charAt(0)}</AvatarFallback>
             </Avatar>

@@ -519,7 +519,7 @@ export function PostList({
                   </div>
                 </div>
                 <div className="text-xs text-muted-foreground mb-2 flex justify-between">
-                  <span className="truncate pr-2">{post.creator_name}</span>
+                  <span className="truncate pr-2 post-byline">{post.creator_name}</span>
                   <span className="whitespace-nowrap flex-shrink-0">
                     {formatPostDate(post.published_at, t.common.unknownDate)}
                   </span>

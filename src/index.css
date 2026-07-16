@@ -249,24 +249,31 @@
   --sidebar-accent:#2f2820; --sidebar-accent-foreground:#ece3d4;
   --sidebar-border:rgba(255,238,214,.09); --sidebar-ring:#e8964a;
   --star:#e8964a; --link:#e8964a;
+  --glow-a:rgba(232,150,74,.14);
 }
 
-/* --- Nightwolf (charcoal + acid lime, dark-committed) --- */
+/* --- Nightwolf v3 (crisp charcoal; teal = fur, lime = eyes) --- */
 .dark[data-color-theme="nightwolf"] {
-  --background:#1d211f; --foreground:#e7ece3;
-  --card:#252a27; --card-foreground:#e7ece3;
-  --popover:#2a302c; --popover-foreground:#e7ece3;
-  --primary:#c3e84a; --primary-foreground:#161a18;
-  --secondary:#2e3431; --secondary-foreground:#e7ece3;
-  --muted:#282e2b; --muted-foreground:#97a099;
-  --accent:#2b332a; --accent-foreground:#eaf2df;
-  --border:rgba(195,232,74,.10); --input:rgba(195,232,74,.18); --ring:#c3e84a;
-  --sidebar:#161a18; --sidebar-foreground:#e7ece3;
-  --sidebar-primary:#c3e84a; --sidebar-primary-foreground:#161a18;
-  --sidebar-accent:#2b332a; --sidebar-accent-foreground:#eaf2df;
-  --sidebar-border:rgba(195,232,74,.10); --sidebar-ring:#c3e84a;
+  --background:#191d16; --foreground:#eaefe1;
+  --card:#212619; --card-foreground:#eaefe1;
+  --popover:#262c1e; --popover-foreground:#eaefe1;
+  --primary:#c3e84a; --primary-foreground:#151a0c;
+  /* lime-tinted actives: selected creator / tabs / selected post all pick it up */
+  --secondary:#2c341e; --secondary-foreground:#e9f2cf;
+  --muted:#232921; --muted-foreground:#9aa591;
+  --accent:#2c341e; --accent-foreground:#eef4d8;
+  --border:rgba(195,232,74,.12); --input:rgba(195,232,74,.20); --ring:#c3e84a;
+  --sidebar:#13160f; --sidebar-foreground:#eaefe1;
+  --sidebar-primary:#c3e84a; --sidebar-primary-foreground:#151a0c;
+  --sidebar-accent:#2c341e; --sidebar-accent-foreground:#eef4d8;
+  --sidebar-border:rgba(195,232,74,.12); --sidebar-ring:#c3e84a;
   --star:#c3e84a; --link:#c3e84a;
+  --glow-a:rgba(195,232,74,.15); --glow-b:rgba(74,161,176,.18);
 }
+/* Nightwolf's teal ("the fur"): constant, structural touches that survive real
+   avatar images — a ring on avatars, the byline on each post. */
+.dark[data-color-theme="nightwolf"] .creator-avatar { box-shadow: 0 0 0 1.5px rgba(74,161,176,.55); }
+.dark[data-color-theme="nightwolf"] .post-byline { color:#4aa1b0; }
 
 /* --- Dhole (amber/rust) — dark --- */
 .dark[data-color-theme="dhole"] {
@@ -299,6 +306,7 @@
   --sidebar-accent:#ecd7a4; --sidebar-accent-foreground:#33241a;
   --sidebar-border:rgba(74,50,20,.14); --sidebar-ring:#bd5527;
   --star:#d8912a; --link:#bd5527;
+  --glow-a:rgba(234,166,47,.12);
 }
 
 /* --- Azure Fox (navy/gold) — dark --- */
@@ -316,6 +324,7 @@
   --sidebar-accent:#2b3c5e; --sidebar-accent-foreground:#eaf1fb;
   --sidebar-border:rgba(180,205,255,.10); --sidebar-ring:#f0c33a;
   --star:#ef9ab0; --link:#6bb0e8;
+  --glow-a:rgba(240,195,58,.12); --glow-b:rgba(74,155,216,.14);
 }
 /* --- Azure Fox — light (frost, stepped) --- */
 :root[data-color-theme="azure-fox"]:not(.dark) {
@@ -332,4 +341,18 @@
   --sidebar-accent:#d7e6f6; --sidebar-accent-foreground:#1b2a45;
   --sidebar-border:rgba(28,42,68,.13); --sidebar-ring:#bd6a12;
   --star:#d1657f; --link:#2f74b8;
+}
+
+/* Ambient reading-pane glow — each character theme sets --glow-a (top-right)
+   and optionally --glow-b (bottom corner); the default theme sets neither, so
+   both fall back to transparent and the pane stays flat. Positioned top-RIGHT
+   so the left-aligned title never sits under the bloom. */
+.reading-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(46% 24% at 80% -6%, var(--glow-a, transparent), transparent 62%),
+    radial-gradient(40% 34% at 104% 106%, var(--glow-b, transparent), transparent 62%);
 }

@@ -79,14 +79,14 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   const downloadedImages = imageAssets.filter(a => a.downloaded_at !== null);
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-card overflow-hidden relative">
+    <div className="flex-1 flex flex-col h-full bg-card overflow-hidden relative reading-glow">
       <ScrollArea className="flex-1">
         <div className="p-8 max-w-3xl mx-auto w-full">
           <div className="mb-8">
             <h1 className="font-serif text-3xl font-bold mb-4 leading-tight break-words [text-wrap:balance]">{post.title}</h1>
             
             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{post.creator_name}</span>
+              <span className="font-medium text-foreground post-byline">{post.creator_name}</span>
               
               <div className="flex items-center">
                 <Calendar className="h-4 w-4 mr-1.5" />

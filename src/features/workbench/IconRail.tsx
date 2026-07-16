@@ -65,7 +65,7 @@ export function IconRail({
                 className="relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 {active && <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-primary" />}
-                <Avatar className={`h-9 w-9 transition-shadow ${active ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100"}`}>
+                <Avatar className={`h-9 w-9 transition-shadow ${active ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100 creator-avatar"}`}>
                   <AvatarImage src={c.avatar_path || undefined} />
                   <AvatarFallback>{c.name.charAt(0)}</AvatarFallback>
                 </Avatar>
