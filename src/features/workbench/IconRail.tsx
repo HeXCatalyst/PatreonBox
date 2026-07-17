@@ -1,6 +1,5 @@
 import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Settings, History } from "lucide-react";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
@@ -53,7 +52,7 @@ export function IconRail({
         <History className="h-4 w-4" />
       </button>
 
-      <ScrollArea className="flex-1 w-full">
+      <div className="flex-1 w-full overflow-y-auto no-scrollbar">
         <div className="flex flex-col items-center gap-2 py-1">
           {ordered.map(c => {
             const active = c.id === selectedCreatorId;
@@ -73,7 +72,7 @@ export function IconRail({
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
 
       <div className="flex flex-col items-center gap-1 pt-2 border-t w-full">
         <button onClick={onOpenSearch} title={t.sidebar.search}

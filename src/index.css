@@ -375,3 +375,8 @@
 /* Nightwolf: teal-edged asset chips (the "fur" secondary on post badges). */
 .dark[data-color-theme="nightwolf"] .asset-chip { border-color: rgba(74,161,176,.4); }
 .dark[data-color-theme="nightwolf"] .asset-chip svg { color: #4aa1b0; }
+
+/* Scrollable but scrollbar-less (the slim workbench rail): without this the
+   scrollbar gutter pushes the centered avatars off-axis. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
