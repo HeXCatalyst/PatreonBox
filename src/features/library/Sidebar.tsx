@@ -63,7 +63,7 @@ function SortableCreatorItem({
         <ContextMenuTrigger className="flex-1 min-w-0">
           <Button
             variant={selected ? "secondary" : "ghost"}
-            className="w-full justify-start h-auto py-2 px-2 min-w-0"
+            className={`w-full justify-start h-auto py-2 px-2 min-w-0${selected ? " creator-row-active" : ""}`}
             onClick={() => onSelect(creator.id)}
           >
             <Pin className="h-3 w-3 text-muted-foreground flex-shrink-0 mr-1" />
@@ -110,7 +110,7 @@ function CreatorItem({
         <ContextMenuTrigger>
           <Button
             variant={selected ? "secondary" : "ghost"}
-            className="w-full justify-start h-auto py-2 px-2"
+            className={`w-full justify-start h-auto py-2 px-2${selected ? " creator-row-active" : ""}`}
             onClick={() => onSelect(creator.id)}
           >
             <Avatar className="h-6 w-6 mr-2 flex-shrink-0 creator-avatar">

@@ -528,7 +528,7 @@ export function PostList({
                   {post.excerpt || post.content_raw?.substring(0, 100)}
                 </p>
                 {post.has_assets > 0 && (
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 asset-chip">
                     <ImageIcon className="h-3 w-3 mr-1" />
                     {t.postList.assets}
                   </Badge>

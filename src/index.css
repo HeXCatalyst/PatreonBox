@@ -356,3 +356,22 @@
     radial-gradient(46% 24% at 80% -6%, var(--glow-a, transparent), transparent 62%),
     radial-gradient(40% 34% at 104% 106%, var(--glow-b, transparent), transparent 62%);
 }
+
+/* Accent bar on the active creator row — character themes only (the attribute
+   is absent on the Default theme, so it stays untouched). */
+[data-color-theme] .creator-row-active { position: relative; }
+[data-color-theme] .creator-row-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.dark[data-color-theme="nightwolf"] .creator-row-active::before { box-shadow: 0 0 8px rgba(195,232,74,.35); }
+
+/* Nightwolf: teal-edged asset chips (the "fur" secondary on post badges). */
+.dark[data-color-theme="nightwolf"] .asset-chip { border-color: rgba(74,161,176,.4); }
+.dark[data-color-theme="nightwolf"] .asset-chip svg { color: #4aa1b0; }
