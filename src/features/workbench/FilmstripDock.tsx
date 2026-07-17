@@ -1,5 +1,6 @@
 import { Post } from "../../types/db";
 import { Image as ImageIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 interface FilmstripDockProps {
   posts: Post[];
@@ -8,6 +9,8 @@ interface FilmstripDockProps {
   thumbFor: (post: Post) => string | null;
   title: string;
   hint?: string;
+  actions?: ReactNode;
+  emptyText?: string;
 }
 
 /**
@@ -15,13 +18,19 @@ interface FilmstripDockProps {
  * creator. Click to open in the canvas; the parent wires ← → to flip. Thumbs
  * lazy-load so a long strip doesn't fetch every image at once.
  */
-export function FilmstripDock({ posts, selectedPostId, onSelect, thumbFor, title, hint }: FilmstripDockProps) {
+export function FilmstripDock({ posts, selectedPostId, onSelect, thumbFor, title, hint, actions, emptyText }: FilmstripDockProps) {
   return (
     <div className="border-t bg-muted/20 flex-shrink-0">
       <div className="flex items-center justify-between px-4 pt-2.5 pb-1.5">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</span>
-        {hint && <span className="text-[11px] text-muted-foreground/70">{hint}</span>}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate">{title}</span>
+          {actions}
+        </div>
+        {hint && <span className="text-[11px] text-muted-foreground/70 flex-shrink-0">{hint}</span>}
       </div>
+      {posts.length === 0 && emptyText && (
+        <div className="px-4 pb-3 text-xs text-muted-foreground">{emptyText}</div>
+      )}
       <div className="flex gap-2.5 overflow-x-auto px-4 pb-3 media-scroll">
         {posts.map(post => {
           const active = post.id === selectedPostId;

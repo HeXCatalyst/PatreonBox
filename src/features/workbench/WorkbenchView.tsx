@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Maximize2 } from "lucide-react";
+import { ChevronLeft, Maximize2, RefreshCw, ImageDown } from "lucide-react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Creator, Post, Asset } from "../../types/db";
 import { getCreatorMedia } from "../../lib/db";
@@ -26,6 +26,16 @@ interface WorkbenchViewProps {
   downloadStatus: DownloadStatus;
   downloadActiveCount: number;
   settingsErrorCount: number;
+  /* Sync + download for the current creator — the Workbench's equivalent of the
+     classic post-list toolbar; they live in the dock header. */
+  onSyncPosts: () => void;
+  onSyncImages: () => Promise<void>;
+  isSyncingPosts: boolean;
+  isSyncingImages: boolean;
+  syncProgress: number;
+  syncTotal: number;
+  imageProgress: number;
+  imageTotal: number;
 }
 
 const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
@@ -41,6 +51,8 @@ export function WorkbenchView({
   posts, selectedPost, selectedPostAssets, onSelectPost, onOpenPost, onToggleStar,
   onOpenSearch, onOpenDownloads, onOpenSettings,
   downloadStatus, downloadActiveCount, settingsErrorCount,
+  onSyncPosts, onSyncImages, isSyncingPosts, isSyncingImages,
+  syncProgress, syncTotal, imageProgress, imageTotal,
 }: WorkbenchViewProps) {
   const t = useTranslation();
   const [imagesDir, setImagesDir] = useState("");
@@ -84,8 +96,13 @@ export function WorkbenchView({
   // Auto-open the newest post when a creator is selected but nothing's open yet
   // (e.g. right after switching creator). With no creator, the canvas stays on
   // its empty state rather than surfacing an arbitrary post.
+  // The creator_id guard matters: right after a switch, `posts` still holds the
+  // PREVIOUS creator's list until the async reload lands — auto-opening from the
+  // stale list put the old creator's post on the canvas (always one switch behind).
   useEffect(() => {
-    if (selectedCreatorId && !selectedPost && posts.length > 0) onSelectPost(posts[0]);
+    if (selectedCreatorId && !selectedPost && posts.length > 0 && posts[0].creator_id === selectedCreatorId) {
+      onSelectPost(posts[0]);
+    }
   }, [selectedCreatorId, posts, selectedPost, onSelectPost]);
 
   // Keyboard: Esc exits Zen, F toggles it, ← / → flip through the creator's posts.
@@ -165,14 +182,43 @@ export function WorkbenchView({
             )}
             <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
           </div>
-          {selectedCreatorId && posts.length > 0 && (
+          {/* Shown whenever a creator is picked — even with zero posts, so its
+              Sync button is reachable for a freshly-added creator. */}
+          {selectedCreatorId && (
             <FilmstripDock
               posts={posts}
               selectedPostId={selectedPost?.id ?? null}
               onSelect={onSelectPost}
               thumbFor={thumbFor}
               title={creatorName ? `${creatorName} · ${posts.length}` : String(posts.length)}
-              hint={t.workbench.flipHint}
+              hint={posts.length > 0 ? t.workbench.flipHint : undefined}
+              emptyText={t.workbench.noPosts}
+              actions={
+                <>
+                  <button
+                    onClick={onSyncPosts}
+                    disabled={isSyncingPosts}
+                    title={t.workbench.syncPosts}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-60 border rounded-full px-2.5 py-1 transition-colors"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isSyncingPosts ? "animate-spin" : ""}`} />
+                    {isSyncingPosts
+                      ? (syncTotal > 0 ? `${syncProgress}/${syncTotal}` : String(syncProgress || ""))
+                      : t.workbench.syncPosts}
+                  </button>
+                  <button
+                    onClick={() => { void onSyncImages(); }}
+                    disabled={isSyncingImages}
+                    title={t.workbench.downloadAssets}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-60 border rounded-full px-2.5 py-1 transition-colors"
+                  >
+                    <ImageDown className={`h-3 w-3 ${isSyncingImages ? "animate-pulse" : ""}`} />
+                    {isSyncingImages
+                      ? (imageTotal > 0 ? `${imageProgress}/${imageTotal}` : String(imageProgress || ""))
+                      : t.workbench.downloadAssets}
+                  </button>
+                </>
+              }
             />
           )}
         </div>

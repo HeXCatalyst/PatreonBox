@@ -142,6 +142,21 @@ function LibraryPanes({
         downloadStatus={downloadStatus}
         downloadActiveCount={downloadActiveCount}
         settingsErrorCount={settingsErrorCount}
+        onSyncPosts={onSyncPosts}
+        onSyncImages={async () => {
+          const dat = settings.downloadAssetTypes;
+          const enabledTypes: string[] = [];
+          if (dat?.images !== false) enabledTypes.push("image");
+          if (dat?.audio !== false) enabledTypes.push("audio");
+          if (dat?.attachments !== false) enabledTypes.push("file");
+          await onSyncImages(enabledTypes);
+        }}
+        isSyncingPosts={syncingPosts && selectedCreatorId === syncingCreatorId}
+        isSyncingImages={syncingImagesCreatorId != null && syncingImagesCreatorId === selectedCreatorId}
+        syncProgress={syncProgress}
+        syncTotal={syncTotal}
+        imageProgress={imageProgress}
+        imageTotal={imageTotal}
       />
     );
   }

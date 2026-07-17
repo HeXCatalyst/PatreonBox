@@ -196,6 +196,9 @@ export interface Translations {
     flipHint: string;
     zen: string;
     zenExit: string;
+    syncPosts: string;
+    downloadAssets: string;
+    noPosts: string;
   };
   timeline: {
     heading: string;
@@ -524,6 +527,9 @@ const zh: Translations = {
     flipHint: '← → 翻页',
     zen: '专注阅读',
     zenExit: '返回',
+    syncPosts: '同步',
+    downloadAssets: '下载',
+    noPosts: '还没有帖子——点「同步」抓取。',
   },
   timeline: {
     heading: '全部动态',
@@ -852,6 +858,9 @@ const en: Translations = {
     flipHint: '← → to flip',
     zen: 'Zen',
     zenExit: 'Back',
+    syncPosts: 'Sync',
+    downloadAssets: 'Download',
+    noPosts: 'No posts yet — hit Sync to fetch them.',
   },
   timeline: {
     heading: 'All activity',
