@@ -105,6 +105,26 @@ pub fn run() {
             sql: "ALTER TABLE assets ADD COLUMN download_error TEXT;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // Post comments, fetched on-demand when a post is opened and cached
+            // for offline reading. parent_id links replies to their top-level
+            // comment (NULL = top-level).
+            version: 8,
+            description: "add_comments",
+            sql: "CREATE TABLE IF NOT EXISTS comments (
+                    id TEXT PRIMARY KEY,
+                    post_id TEXT NOT NULL,
+                    parent_id TEXT,
+                    author_name TEXT,
+                    author_id TEXT,
+                    body TEXT,
+                    published_at TEXT,
+                    reply_count INTEGER NOT NULL DEFAULT 0,
+                    fetched_at TEXT
+                  );
+                  CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -157,6 +177,7 @@ pub fn run() {
         })
         .manage(commands::ScrapedSubscriptionsState(std::sync::Mutex::new(None)))
         .manage(commands::ScrapedPostsRawState(std::sync::Mutex::new(None)))
+        .manage(commands::comments::PostCommentsRawState(std::sync::Mutex::new(None)))
         .manage(commands::ImageDownloadCancelFlag(
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
         ))
@@ -220,6 +241,8 @@ pub fn run() {
             commands::download_manager::clear_completed_downloads,
             commands::sync_history::get_sync_runs,
             commands::sync_history::clear_sync_runs,
+            commands::comments::fetch_post_comments,
+            commands::comments::report_post_comments,
             commands::sync_history::get_unseen_failed_count,
             commands::sync_history::mark_sync_runs_seen,
             commands::search::search_posts,

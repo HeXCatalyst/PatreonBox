@@ -1,5 +1,5 @@
 import Database from '@tauri-apps/plugin-sql';
-import { Creator, Post, Asset } from '../types/db';
+import { Creator, Post, Asset, Comment } from '../types/db';
 
 let dbInstance: Database | null = null;
 
@@ -193,6 +193,15 @@ export async function getCreatorMedia(
     [creatorId],
   );
   return rows.filter(a => MEDIA_IMAGE_RE.test(a.file_name));
+}
+
+/** Cached comments for a post, oldest first (replies resolved by parent_id). */
+export async function getPostComments(postId: string): Promise<Comment[]> {
+  const db = await getDb();
+  return db.select<Comment[]>(
+    `SELECT * FROM comments WHERE post_id = ? ORDER BY published_at ASC, id ASC`,
+    [postId],
+  );
 }
 
 // -----------------------------------------------------------------------------

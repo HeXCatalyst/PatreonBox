@@ -11,6 +11,7 @@ pub mod self_check;
 pub mod download_manager;
 pub mod sync_history;
 pub mod search;
+pub mod comments;
 
 // Re-export state types for convenient access from lib.rs .manage() calls
 pub use scraping::ScrapedPostsRawState;

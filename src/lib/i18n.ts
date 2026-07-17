@@ -125,6 +125,15 @@ export interface Translations {
     saveToDownloads: string;
     close: string;
   };
+  comments: {
+    heading: (n: number) => string;
+    refresh: string;
+    loading: string;
+    empty: string;
+    notLoaded: string;
+    error: string;
+    unknownAuthor: string;
+  };
   mediaView: {
     postsTab: string;
     mediaTab: string;
@@ -462,6 +471,15 @@ const zh: Translations = {
     saveToDownloads: '保存到下载',
     close: '关闭 (Esc)',
   },
+  comments: {
+    heading: (n) => `评论 (${n})`,
+    refresh: '刷新',
+    loading: '加载评论中…',
+    empty: '暂无评论',
+    notLoaded: '点击刷新加载评论',
+    error: '评论加载失败',
+    unknownAuthor: '匿名',
+  },
   mediaView: {
     postsTab: '帖子',
     mediaTab: '媒体',
@@ -798,6 +816,15 @@ const en: Translations = {
     downloadedAt: (date) => `Downloaded at ${date}`,
     saveToDownloads: 'Save to Downloads',
     close: 'Close (Esc)',
+  },
+  comments: {
+    heading: (n) => `Comments (${n})`,
+    refresh: 'Refresh',
+    loading: 'Loading comments…',
+    empty: 'No comments yet',
+    notLoaded: 'Click Refresh to load comments',
+    error: 'Failed to load comments',
+    unknownAuthor: 'Anonymous',
   },
   mediaView: {
     postsTab: 'Posts',

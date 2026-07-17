@@ -370,7 +370,7 @@ enum DlOutcome { Ok(u64), Transient(String), Permanent(String) }
 /// Best-effort Patreon session cookies from the app's webview cookie store (shared
 /// with the authenticated login/scraper webviews). Auth-gated attachment/video
 /// URLs 403 without the session; signed image CDN links don't need it.
-fn patreon_cookie_header(app: &AppHandle) -> Option<String> {
+pub(crate) fn patreon_cookie_header(app: &AppHandle) -> Option<String> {
     use tauri::Manager;
     let url = tauri::Url::parse("https://www.patreon.com/").ok()?;
     let wv = app.webview_windows().into_values().next()?;

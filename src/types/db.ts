@@ -59,6 +59,18 @@ export interface Asset {
   published_at?: string | null;
 }
 
+export interface Comment {
+  id: string;
+  post_id: string;
+  parent_id: string | null;
+  author_name: string | null;
+  author_id: string | null;
+  body: string | null;
+  published_at: string | null;
+  reply_count: number;
+  fetched_at: string | null;
+}
+
 export interface SyncRun {
   id: string;
   source_key: string;

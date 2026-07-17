@@ -6,6 +6,7 @@ import { Calendar, ExternalLink, Image as ImageIcon, Star } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { ImageLightbox } from "./ImageLightbox";
+import { PostComments } from "./PostComments";
 import { ImageGallery } from "./ImageGallery";
 import { useTranslation } from "../../lib/i18n";
 
@@ -298,6 +299,8 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
               )}
             </div>
           )}
+
+          <PostComments postId={post.id} />
         </div>
       </ScrollArea>
       {lightboxIndex !== null && (
