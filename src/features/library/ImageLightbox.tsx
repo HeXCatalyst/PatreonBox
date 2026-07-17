@@ -25,7 +25,7 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
 
   const current = images[currentIndex];
   const hasMultiple = images.length > 1;
-  const sizeLabel = current.byte_size
+  const sizeLabel = current?.byte_size
     ? current.byte_size < 1024 * 1024
       ? `${Math.round(current.byte_size / 1024)} KB`
       : `${(current.byte_size / (1024 * 1024)).toFixed(1)} MB`
@@ -65,6 +65,20 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
     return () => window.removeEventListener("wheel", handleWheel);
   }, []);
 
+  // Flag this modal so parent global key handlers (e.g. the Workbench's ← →
+  // post-flip) stand down while the lightbox owns the arrow keys — otherwise the
+  // post changes underneath, the image set swaps, and the index goes out of range.
+  useEffect(() => {
+    document.body.setAttribute("data-lightbox-open", "1");
+    return () => document.body.removeAttribute("data-lightbox-open");
+  }, []);
+
+  // Belt-and-suspenders: if the underlying image set ever shrinks, keep the index
+  // in range so `current` never becomes undefined.
+  useEffect(() => {
+    if (images.length > 0 && currentIndex > images.length - 1) setCurrentIndex(images.length - 1);
+  }, [images.length, currentIndex]);
+
   const getUrl = (asset: Asset) => {
     const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
     // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
@@ -93,6 +107,8 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
     dragStart.current = { x: e.clientX, y: e.clientY };
     panStart.current = { ...pan };
   };
+
+  if (!current) return null;
 
   return (
     <div

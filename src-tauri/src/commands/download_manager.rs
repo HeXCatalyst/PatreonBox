@@ -100,6 +100,18 @@ pub async fn start_downloads(
     struct Row { id: String, creator_id: String, source_url: String, local_path: String, file_name: String }
     let rows: Vec<Row> = {
         let conn = open_db(&app)?;
+        // An explicit whole-creator download is a deliberate user action, so also
+        // re-attempt assets that previously errored (e.g. attachments/videos that
+        // 403'd before auth cookies were wired up). Clear their error flag so the
+        // SELECT below re-enqueues them instead of skipping on `download_error IS NULL`.
+        if let Some(cid) = &creator_id {
+            let _ = conn.execute(
+                "UPDATE assets SET download_error = NULL
+                 WHERE downloaded_at IS NULL AND download_error IS NOT NULL
+                   AND post_id IN (SELECT id FROM posts WHERE creator_id = ?1)",
+                rusqlite::params![cid],
+            );
+        }
         let type_filter = match &enabled_types {
             Some(types) if !types.is_empty() => {
                 let ph: Vec<String> = types.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
@@ -355,6 +367,30 @@ async fn supervisor(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>) {
 
 enum DlOutcome { Ok(u64), Transient(String), Permanent(String) }
 
+/// Best-effort Patreon session cookies from the app's webview cookie store (shared
+/// with the authenticated login/scraper webviews). Auth-gated attachment/video
+/// URLs 403 without the session; signed image CDN links don't need it.
+fn patreon_cookie_header(app: &AppHandle) -> Option<String> {
+    use tauri::Manager;
+    let url = tauri::Url::parse("https://www.patreon.com/").ok()?;
+    let wv = app.webview_windows().into_values().next()?;
+    let cookies = wv.cookies_for_url(url).ok()?;
+    let header = cookies.iter()
+        .map(|c| format!("{}={}", c.name(), c.value()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    (!header.is_empty()).then_some(header)
+}
+
+fn is_patreon_url(u: &str) -> bool {
+    tauri::Url::parse(u).ok()
+        .and_then(|p| p.host_str().map(|h| {
+            h == "patreon.com" || h.ends_with(".patreon.com")
+                || h == "patreonusercontent.com" || h.ends_with(".patreonusercontent.com")
+        }))
+        .unwrap_or(false)
+}
+
 async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asset_id: String) {
     let (source_url, dest) = {
         let m = mgr_arc.lock().await;
@@ -365,7 +401,10 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
     };
 
     let client = build_http_client(&app);
-    let outcome = download_streaming(&app, &mgr_arc, &asset_id, &client, &source_url, &dest).await;
+    // Attach the session cookie only for patreon.com hosts (auth-gated attachments
+    // /videos). reqwest drops it on the cross-host redirect to the signed CDN.
+    let cookie = if is_patreon_url(&source_url) { patreon_cookie_header(&app) } else { None };
+    let outcome = download_streaming(&app, &mgr_arc, &asset_id, &client, &source_url, &dest, cookie.as_deref()).await;
 
     // Per-request pacing to avoid CDN rate-limiting (kept per worker).
     let (_, retries, delay_enabled, delay_ms, jitter_enabled, jitter_ms) = read_download_settings(&app);
@@ -438,6 +477,7 @@ async fn download_streaming(
     client: &reqwest::Client,
     source_url: &str,
     dest: &std::path::Path,
+    cookie: Option<&str>,
 ) -> DlOutcome {
     if let Some(parent) = dest.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -448,7 +488,11 @@ async fn download_streaming(
         return DlOutcome::Ok(size);
     }
 
-    let mut resp = match client.get(source_url).send().await {
+    let mut req = client.get(source_url);
+    if let Some(ck) = cookie {
+        req = req.header(reqwest::header::COOKIE, ck);
+    }
+    let mut resp = match req.send().await {
         Ok(r) => r,
         Err(e) => return DlOutcome::Transient(format!("request failed: {}", e)),
     };

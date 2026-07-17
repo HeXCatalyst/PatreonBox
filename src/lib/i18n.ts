@@ -88,6 +88,7 @@ export interface Translations {
     noTextContent: string;
     savedToDownloads: string;
     audioHeading: (count: number) => string;
+    videoHeading: (count: number) => string;
     openInSystem: string;
     saveToDownloads: string;
     notDownloaded: string;
@@ -424,6 +425,7 @@ const zh: Translations = {
     noTextContent: '该帖子没有正文内容。',
     savedToDownloads: '✓ 已保存到下载',
     audioHeading: (count) => `🎵 音频 (${count})`,
+    videoHeading: (count) => `🎬 视频 (${count})`,
     openInSystem: '在系统中打开',
     saveToDownloads: '保存到 Downloads',
     notDownloaded: '未下载',
@@ -760,6 +762,7 @@ const en: Translations = {
     noTextContent: 'No text content available for this post.',
     savedToDownloads: '✓ Saved to Downloads',
     audioHeading: (count) => `🎵 Audio (${count})`,
+    videoHeading: (count) => `🎬 Video (${count})`,
     openInSystem: 'Open in system',
     saveToDownloads: 'Save to Downloads',
     notDownloaded: 'Not downloaded',

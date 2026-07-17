@@ -260,7 +260,7 @@ export function PostList({
                   )}
                 </span>
                 <Button size="sm" variant="secondary" onClick={onPausePosts} className="h-7 text-xs px-2">{t.postList.pause}</Button>
-                <Button size="sm" variant="outline" onClick={onCancelPosts} className="h-7 text-xs px-2 text-destructive border-destructive hover:bg-destructive/10">{t.postList.cancel}</Button>
+                <Button size="sm" variant="destructive" onClick={onCancelPosts} className="h-7 text-xs px-2">{t.postList.cancel}</Button>
               </>
             )}
 
@@ -271,7 +271,7 @@ export function PostList({
                   {t.postList.downloadingImages(imageProgress, imageTotal > 0 ? String(imageTotal) : '...')}
                 </span>
                 <Button size="sm" variant="secondary" onClick={onPauseImages} className="h-7 text-xs px-2">{t.postList.pause}</Button>
-                <Button size="sm" variant="outline" onClick={onCancelImages} className="h-7 text-xs px-2 text-destructive border-destructive hover:bg-destructive/10">{t.postList.cancel}</Button>
+                <Button size="sm" variant="destructive" onClick={onCancelImages} className="h-7 text-xs px-2">{t.postList.cancel}</Button>
               </>
             )}
 

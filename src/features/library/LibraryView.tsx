@@ -150,7 +150,7 @@ function LibraryPanes({
           const enabledTypes: string[] = [];
           if (dat?.images !== false) enabledTypes.push("image");
           if (dat?.audio !== false) enabledTypes.push("audio");
-          if (dat?.attachments !== false) enabledTypes.push("file");
+          if (dat?.attachments !== false) { enabledTypes.push("file"); enabledTypes.push("video"); }
           await onSyncImages(enabledTypes);
         }}
         isSyncingPosts={syncingPosts && selectedCreatorId === syncingCreatorId}
@@ -235,7 +235,7 @@ function LibraryPanes({
             const enabledTypes: string[] = [];
             if (dat?.images !== false) enabledTypes.push("image");
             if (dat?.audio !== false) enabledTypes.push("audio");
-            if (dat?.attachments !== false) enabledTypes.push("file");
+            if (dat?.attachments !== false) { enabledTypes.push("file"); enabledTypes.push("video"); }
             await onSyncImages(enabledTypes);
           }}
           isSyncingImages={syncingImagesCreatorId != null && syncingImagesCreatorId === selectedCreatorId}
@@ -457,6 +457,18 @@ export function LibraryView() {
       setSelectedPostAssets([]);
     }
   }, [selectedPost]);
+
+  // When the download queue drains, refresh the open post's assets so freshly
+  // downloaded images/videos flip from "Not downloaded" to playable/viewable
+  // without needing to re-open the post.
+  const prevDownloadStatusRef = useRef<typeof downloadStatus>(downloadStatus);
+  useEffect(() => {
+    if (prevDownloadStatusRef.current === "downloading" && downloadStatus === "idle" && selectedPost) {
+      loadAssets(selectedPost.id);
+    }
+    prevDownloadStatusRef.current = downloadStatus;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadStatus]);
 
   const handleDeleteCreator = async (id: string) => {
     if (demoMode) return;

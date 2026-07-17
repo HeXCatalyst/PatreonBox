@@ -5,6 +5,7 @@ import { Creator, Post, Asset } from "../../types/db";
 import { getCreatorMedia } from "../../lib/db";
 import { ReadingView } from "../library/ReadingView";
 import { MediaView } from "../library/MediaView";
+import { Button } from "@/components/ui/button";
 import { IconRail } from "./IconRail";
 import { FilmstripDock } from "./FilmstripDock";
 import { TimelineView } from "./TimelineView";
@@ -139,6 +140,9 @@ export function WorkbenchView({
   // Keyboard: Esc exits Zen, F toggles it, ← / → flip through the creator's posts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The image lightbox is a modal that owns the arrow keys — don't also flip
+      // posts underneath it (that swaps the image set and crashes the lightbox).
+      if (document.body.hasAttribute("data-lightbox-open")) return;
       const el = e.target as HTMLElement;
       const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
       if (e.key === "Escape" && zen) { setZen(false); return; }
@@ -290,28 +294,32 @@ export function WorkbenchView({
                       </button>
                     </>
                   )}
-                  <button
+                  {/* Sync = the primary action (accent-filled); Download = secondary. */}
+                  <Button
+                    variant="default"
+                    size="xs"
                     onClick={onSyncPosts}
                     disabled={isSyncingPosts}
                     title={t.workbench.syncPosts}
-                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-60 border rounded-full px-2.5 py-1 transition-colors flex-shrink-0"
+                    className="flex-shrink-0"
                   >
-                    <RefreshCw className={`h-3 w-3 ${isSyncingPosts ? "animate-spin" : ""}`} />
+                    <RefreshCw className={isSyncingPosts ? "animate-spin" : ""} />
                     {isSyncingPosts
                       ? (syncTotal > 0 ? `${syncProgress}/${syncTotal}` : String(syncProgress || ""))
                       : t.workbench.syncPosts}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
                     onClick={() => { void onSyncImages(); }}
                     disabled={isSyncingImages}
                     title={t.workbench.downloadAssets}
-                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-60 border rounded-full px-2.5 py-1 transition-colors"
                   >
-                    <ImageDown className={`h-3 w-3 ${isSyncingImages ? "animate-pulse" : ""}`} />
+                    <ImageDown className={isSyncingImages ? "animate-pulse" : ""} />
                     {isSyncingImages
                       ? (imageTotal > 0 ? `${imageProgress}/${imageTotal}` : String(imageProgress || ""))
                       : t.workbench.downloadAssets}
-                  </button>
+                  </Button>
                 </>
               }
             />

@@ -56,6 +56,8 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   }
 
   const isImage = (filename: string) => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(filename);
+  // Classify by extension — Patreon sometimes mis-declares a video's mimetype.
+  const isVideo = (filename: string) => /\.(mp4|webm|mov|m4v|mkv)$/i.test(filename);
 
   const formatSize = (bytes: number | null) => {
     if (!bytes) return null;
@@ -73,9 +75,10 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   };
 
   const safeDateString = formatPostDate(post.published_at, t.common.unknownDate);
+  const videoAssets  = assets.filter(a => isVideo(a.file_name));
   const imageAssets  = assets.filter(a => isImage(a.file_name));
-  const audioAssets  = assets.filter(a => a.mime_type?.startsWith("audio/") ?? false);
-  const fileAssets   = assets.filter(a => !isImage(a.file_name) && !(a.mime_type?.startsWith("audio/") ?? false));
+  const audioAssets  = assets.filter(a => (a.mime_type?.startsWith("audio/") ?? false) && !isVideo(a.file_name));
+  const fileAssets   = assets.filter(a => !isImage(a.file_name) && !isVideo(a.file_name) && !(a.mime_type?.startsWith("audio/") ?? false));
   // Carry the post's publish time onto each image so the lightbox can show when
   // the creator originally posted it (not just when we downloaded the file).
   const downloadedImages = imageAssets
@@ -85,7 +88,10 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   return (
     <div className="flex-1 flex flex-col h-full bg-card overflow-hidden relative reading-glow">
       <ScrollArea className="flex-1">
-        <div className="p-8 max-w-3xl mx-auto w-full">
+        <div className="p-8 w-full">
+          {/* Text keeps a comfortable reading measure; the media panel below
+              breaks out wider (esp. in the roomy Workbench canvas). */}
+          <div className="max-w-3xl mx-auto">
           <div className="mb-8">
             <h1 className="font-serif text-3xl font-bold mb-4 leading-tight break-words [text-wrap:balance]">{post.title}</h1>
             
@@ -135,9 +141,10 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
               {post.has_assets > 0 ? t.readingView.imagePostHint : t.readingView.noTextContent}
             </div>
           )}
-          
+          </div>
+
           {assets.length > 0 && (
-            <div className="mt-8 border rounded-lg overflow-hidden bg-muted/20">
+            <div className="max-w-5xl mx-auto mt-8 border rounded-lg overflow-hidden bg-muted/20">
               {imageAssets.length > 0 && (
                 <ImageGallery
                   assets={imageAssets}
@@ -150,6 +157,55 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
                     showToast(t.readingView.savedToDownloads);
                   }}
                 />
+              )}
+              {videoAssets.length > 0 && (
+                <>
+                  <div className="bg-muted px-4 py-3 font-medium flex items-center text-sm border-t first:border-t-0">
+                    {t.readingView.videoHeading(videoAssets.length)}
+                  </div>
+                  <ul className="divide-y text-sm">
+                    {videoAssets.map(asset => (
+                      <li key={asset.id} className="p-4">
+                        {asset.downloaded_at !== null ? (
+                          <>
+                            <div className="font-medium text-sm mb-2 truncate">{asset.file_name}</div>
+                            <video
+                              controls
+                              playsInline
+                              preload="metadata"
+                              src={assetUrl(asset.local_path, asset.downloaded_at)}
+                              onDoubleClick={e => { void e.currentTarget.requestFullscreen?.().catch(() => {}); }}
+                              className="w-full max-h-[70vh] rounded bg-black mb-2"
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                className="text-xs px-3 py-1.5 rounded border border-border hover:bg-muted/50 transition-colors"
+                                onClick={() => invoke("open_asset_in_system", { localPath: asset.local_path })}
+                              >
+                                {t.readingView.openInSystem}
+                              </button>
+                              <button
+                                className="text-xs px-3 py-1.5 rounded border border-border bg-primary/10 hover:bg-primary/20 transition-colors"
+                                onClick={async () => {
+                                  await invoke("save_asset_to_downloads", { localPath: asset.local_path });
+                                  showToast(t.readingView.savedToDownloads);
+                                }}
+                              >
+                                {t.readingView.saveToDownloads}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex items-center gap-3 text-muted-foreground">
+                            <span>🎬</span>
+                            <span className="truncate text-sm">{asset.file_name}</span>
+                            <span className="text-xs ml-auto">{t.readingView.notDownloaded}</span>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
               {audioAssets.length > 0 && (
                 <>

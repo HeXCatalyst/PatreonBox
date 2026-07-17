@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronDown, ChevronRight, Pause, Play, RotateCcw, X, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DownloadJob } from "./useDownloadJobs";
+import { Button } from "@/components/ui/button";
 
 interface DownloadsViewProps {
   jobs: DownloadJob[];
@@ -105,21 +106,18 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
           {failed.length > 0 && <span className="text-destructive">{failed.length} failed</span>}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button className="px-3 py-1.5 text-xs rounded border hover:bg-muted flex items-center gap-1.5"
-            onClick={togglePause}>
-            {paused ? <><Play className="h-3.5 w-3.5" /> Resume all</> : <><Pause className="h-3.5 w-3.5" /> Pause all</>}
-          </button>
+          <Button variant="outline" size="sm" onClick={togglePause}>
+            {paused ? <><Play /> Resume all</> : <><Pause /> Pause all</>}
+          </Button>
           {failed.length > 0 && (
-            <button className="px-3 py-1.5 text-xs rounded border hover:bg-muted"
-              onClick={() => act(invoke("retry_all_failed", { creatorId: null }))}>
-              Retry all failed
-            </button>
+            <Button variant="outline" size="sm" onClick={() => act(invoke("retry_all_failed", { creatorId: null }))}>
+              <RotateCcw /> Retry all failed
+            </Button>
           )}
           {(downloading.length + queued.length + failed.length) > 0 && (
-            <button className="px-3 py-1.5 text-xs rounded border hover:bg-muted hover:text-destructive flex items-center gap-1.5"
-              onClick={() => act(invoke("cancel_all_downloads"))}>
-              <XCircle className="h-3.5 w-3.5" /> Cancel all
-            </button>
+            <Button variant="destructive" size="sm" onClick={() => act(invoke("cancel_all_downloads"))}>
+              <XCircle /> Cancel all
+            </Button>
           )}
         </div>
       </div>

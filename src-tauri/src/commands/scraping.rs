@@ -291,6 +291,18 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
 
             return Ok(1);
         }
+
+        // User closed the scraper window before it finished → stop waiting instead
+        // of spinning until the 120s timeout. Whatever pages already reported are
+        // saved; treat it as a (partial) success so the UI stops and refreshes.
+        if tauri::Manager::get_webview_window(&app, "post-scraper").is_none() {
+            eprintln!("DEBUG: scraper window closed by user at poll {}; ending sync.", i);
+            let posts_after = super::sync_history::creator_post_count(&app, &creator_id);
+            super::sync_history::finish_run(&app, &run_id, "success", 1, (posts_after - posts_before).max(0), None);
+            use tauri::Emitter;
+            let _ = app.emit("sync-complete", serde_json::json!({ "creator_id": creator_id }));
+            return Ok(1);
+        }
     }
 
     close_window(&app, "post-scraper");
@@ -300,7 +312,17 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
     Err(msg)
 }
 
-fn derive_media_type(mime: &str) -> &'static str {
+fn derive_media_type(mime: &str, filename: &str) -> &'static str {
+    // Extension wins for known media types — Patreon sometimes mis-declares the
+    // mimetype (e.g. an .mp4 attachment reported as image/jpeg), which would
+    // otherwise bucket a video as an image.
+    let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "mp4" | "webm" | "mov" | "m4v" | "mkv" | "avi" => return "video",
+        "mp3" | "wav" | "ogg" | "flac" | "m4a" | "aac" => return "audio",
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" => return "image",
+        _ => {}
+    }
     if mime.starts_with("image/") { "image" }
     else if mime.starts_with("audio/") { "audio" }
     else if mime.starts_with("video/") { "video" }
@@ -367,7 +389,7 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
                         .and_then(|m| m.as_str())
                         .unwrap_or("image/jpeg")
                         .to_string();
-                    let mtype = derive_media_type(&mime).to_string();
+                    let mtype = derive_media_type(&mime, &fname).to_string();
                     (url, fname, mime, mtype)
                 }
                 "attachment" => {
@@ -392,7 +414,7 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
                         .and_then(|m| m.as_str())
                         .unwrap_or("application/octet-stream")
                         .to_string();
-                    let mtype = derive_media_type(&mime).to_string();
+                    let mtype = derive_media_type(&mime, &fname).to_string();
                     (url, fname, mime, mtype)
                 }
                 _ => continue,
