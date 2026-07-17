@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Moon, Sun, Monitor } from "lucide-react";
 import { useSettings } from "../SettingsContext";
 import { useTranslation } from "../../../lib/i18n";
-import { applyTheme, COLOR_THEMES, type ColorTheme } from "../../../lib/theme";
+import { applyTheme, COLOR_THEMES, STABLE_THEMES, type ColorTheme } from "../../../lib/theme";
 
 const MODE_ICONS = { dark: Moon, light: Sun, system: Monitor } as const;
 
@@ -29,12 +29,12 @@ export function AppearanceSection() {
     }
   }, [settings.theme, settings.color_theme]);
 
-  // Character themes are still experimental (Nightwolf especially needs polish),
-  // so they only appear when developer mode is on. Default is always available,
-  // and the currently-selected theme stays visible so nobody gets stuck on one.
+  // Stable themes are offered to everyone; the ones still being polished only
+  // appear under developer mode. The currently-selected theme always stays
+  // visible so nobody gets stuck on a hidden one.
   const visibleThemes = settings.developer_mode_enabled
     ? COLOR_THEMES
-    : COLOR_THEMES.filter(ct => ct === 'default' || ct === settings.color_theme);
+    : COLOR_THEMES.filter(ct => STABLE_THEMES.includes(ct) || ct === settings.color_theme);
 
   return (
     <div>

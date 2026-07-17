@@ -36,6 +36,14 @@ interface WorkbenchViewProps {
   syncTotal: number;
   imageProgress: number;
   imageTotal: number;
+  /* Sync options, mirroring the classic toolbar: how many posts to fetch,
+     new-only, and the sync mode. */
+  maxPosts: number;
+  onMaxPostsChange: (n: number) => void;
+  incrementalSync: boolean;
+  onIncrementalSyncChange: (v: boolean) => void;
+  syncMode: 'normal' | 'full';
+  onSyncModeChange: (m: 'normal' | 'full') => void;
 }
 
 const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
@@ -53,12 +61,24 @@ export function WorkbenchView({
   downloadStatus, downloadActiveCount, settingsErrorCount,
   onSyncPosts, onSyncImages, isSyncingPosts, isSyncingImages,
   syncProgress, syncTotal, imageProgress, imageTotal,
+  maxPosts, onMaxPostsChange, incrementalSync, onIncrementalSyncChange,
+  syncMode, onSyncModeChange,
 }: WorkbenchViewProps) {
   const t = useTranslation();
   const [imagesDir, setImagesDir] = useState("");
   const [media, setMedia] = useState<Asset[]>([]);
   const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
   const [zen, setZen] = useState(false);
+  // Typed freely, committed on blur/Enter — same contract as the classic toolbar.
+  const [maxPostsInput, setMaxPostsInput] = useState(String(maxPosts));
+
+  useEffect(() => { setMaxPostsInput(String(maxPosts)); }, [maxPosts]);
+
+  const commitMaxPosts = () => {
+    const val = parseInt(maxPostsInput);
+    if (!isNaN(val) && val >= 1) onMaxPostsChange(val);
+    else setMaxPostsInput(String(maxPosts));
+  };
 
   // Selecting a creator (from the rail) always returns to the Workbench home.
   const selectCreator = (id: string) => { setHome('workbench'); onSelectCreator(id); };
@@ -195,11 +215,45 @@ export function WorkbenchView({
               emptyText={t.workbench.noPosts}
               actions={
                 <>
+                  {/* Sync options — hidden mid-sync, like the classic toolbar */}
+                  {!isSyncingPosts && !isSyncingImages && (
+                    <>
+                      <input
+                        type="number"
+                        min={1}
+                        value={maxPostsInput}
+                        onChange={e => setMaxPostsInput(e.target.value)}
+                        onBlur={commitMaxPosts}
+                        onKeyDown={e => e.key === 'Enter' && commitMaxPosts()}
+                        title={t.postList.maxPostsTooltip}
+                        className="h-6 w-12 text-[11px] px-1 border rounded bg-background text-center flex-shrink-0"
+                      />
+                      <label
+                        title={t.postList.onlyNewPostsTooltip}
+                        className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none flex-shrink-0"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={incrementalSync}
+                          onChange={e => onIncrementalSyncChange(e.target.checked)}
+                          className="h-3 w-3"
+                        />
+                        {t.postList.onlyNewPosts}
+                      </label>
+                      <button
+                        onClick={() => onSyncModeChange(syncMode === 'normal' ? 'full' : 'normal')}
+                        title={syncMode === 'normal' ? t.postList.modeNormalDesc : t.postList.modeFullDesc}
+                        className="text-[11px] font-medium text-muted-foreground hover:text-foreground border rounded-full px-2 py-1 transition-colors flex-shrink-0"
+                      >
+                        {syncMode === 'normal' ? t.postList.modeNormalBare : t.postList.modeFullBare}
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={onSyncPosts}
                     disabled={isSyncingPosts}
                     title={t.workbench.syncPosts}
-                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-60 border rounded-full px-2.5 py-1 transition-colors"
+                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-60 border rounded-full px-2.5 py-1 transition-colors flex-shrink-0"
                   >
                     <RefreshCw className={`h-3 w-3 ${isSyncingPosts ? "animate-spin" : ""}`} />
                     {isSyncingPosts

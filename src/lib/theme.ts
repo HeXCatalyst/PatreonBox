@@ -2,6 +2,10 @@ export type ColorTheme = 'default' | 'reading-room' | 'dhole' | 'nightwolf' | 'a
 
 export const COLOR_THEMES: ColorTheme[] = ['default', 'reading-room', 'dhole', 'nightwolf', 'azure-fox'];
 
+// Themes offered to everyone. The rest are still being polished (they lack the
+// full accent system Nightwolf got) and only surface under Developer Mode.
+export const STABLE_THEMES: ColorTheme[] = ['default', 'nightwolf'];
+
 // Themes that commit to a single dark look regardless of the light/dark mode
 // toggle. We force `.dark` on for them so `dark:` utilities stay consistent.
 // Dhole and Azure Fox also have a light variant and follow the mode setting.

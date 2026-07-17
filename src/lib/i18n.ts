@@ -575,7 +575,7 @@ const zh: Translations = {
     layoutClassic: '经典三栏',
     layoutWorkbench: '工作台',
     colorThemeLabel: '配色主题',
-    colorThemeDesc: '为整个应用换一套配色。角色主题(阅读室、豺、暗夜狼、蓝狐)仍在打磨,已收进开发者模式;开启后可选。',
+    colorThemeDesc: '为整个应用换一套配色。暗夜狼已可用;其余角色主题仍在打磨,收在开发者模式里。',
     themeName: (ct) => (({ 'default': '默认', 'reading-room': '阅读室', 'dhole': '豺 Dhole', 'nightwolf': '暗夜狼', 'azure-fox': '蓝狐' } as Record<string, string>)[ct] ?? ct),
   },
   settingsNetwork: {
@@ -906,7 +906,7 @@ const en: Translations = {
     layoutClassic: 'Classic 3-pane',
     layoutWorkbench: 'Workbench',
     colorThemeLabel: 'Color theme',
-    colorThemeDesc: 'Recolor the whole app. The character themes (Reading Room, Dhole, Nightwolf, Azure Fox) are still being polished, so they live under Developer Mode — turn it on to pick them.',
+    colorThemeDesc: 'Recolor the whole app. Nightwolf is ready to use; the other character themes are still being polished and live under Developer Mode.',
     themeName: (ct) => (({ 'default': 'Default', 'reading-room': 'Reading Room', 'dhole': 'Dhole', 'nightwolf': 'Nightwolf', 'azure-fox': 'Azure Fox' } as Record<string, string>)[ct] ?? ct),
   },
   settingsNetwork: {

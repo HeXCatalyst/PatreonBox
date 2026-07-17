@@ -157,6 +157,12 @@ function LibraryPanes({
         syncTotal={syncTotal}
         imageProgress={imageProgress}
         imageTotal={imageTotal}
+        maxPosts={maxPosts}
+        onMaxPostsChange={onMaxPostsChange}
+        incrementalSync={incrementalSync}
+        onIncrementalSyncChange={onIncrementalSyncChange}
+        syncMode={syncMode}
+        onSyncModeChange={onSyncModeChange}
       />
     );
   }
