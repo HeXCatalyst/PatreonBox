@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Maximize2, RefreshCw, ImageDown } from "lucide-react";
+import { ChevronLeft, Maximize2, RefreshCw, ImageDown, FileText, Image as ImageIcon } from "lucide-react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Creator, Post, Asset } from "../../types/db";
 import { getCreatorMedia } from "../../lib/db";
 import { ReadingView } from "../library/ReadingView";
+import { MediaView } from "../library/MediaView";
 import { IconRail } from "./IconRail";
 import { FilmstripDock } from "./FilmstripDock";
 import { TimelineView } from "./TimelineView";
@@ -23,6 +24,8 @@ interface WorkbenchViewProps {
   onOpenSearch: () => void;
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
+  onSyncSubscriptions: () => void;
+  syncingSubscriptions: boolean;
   downloadStatus: DownloadStatus;
   downloadActiveCount: number;
   settingsErrorCount: number;
@@ -44,6 +47,10 @@ interface WorkbenchViewProps {
   onIncrementalSyncChange: (v: boolean) => void;
   syncMode: 'normal' | 'full';
   onSyncModeChange: (m: 'normal' | 'full') => void;
+  /* Media grid (shared with the classic layout) — sort order + demo flag. */
+  mediaOrder: 'desc' | 'asc';
+  onMediaOrderChange: (order: 'desc' | 'asc') => void;
+  demoMode: boolean;
 }
 
 const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
@@ -58,16 +65,19 @@ export function WorkbenchView({
   creators, selectedCreatorId, onSelectCreator,
   posts, selectedPost, selectedPostAssets, onSelectPost, onOpenPost, onToggleStar,
   onOpenSearch, onOpenDownloads, onOpenSettings,
+  onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
   onSyncPosts, onSyncImages, isSyncingPosts, isSyncingImages,
   syncProgress, syncTotal, imageProgress, imageTotal,
   maxPosts, onMaxPostsChange, incrementalSync, onIncrementalSyncChange,
   syncMode, onSyncModeChange,
+  mediaOrder, onMediaOrderChange, demoMode,
 }: WorkbenchViewProps) {
   const t = useTranslation();
   const [imagesDir, setImagesDir] = useState("");
   const [media, setMedia] = useState<Asset[]>([]);
   const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
+  const [mode, setMode] = useState<'posts' | 'media'>('posts');
   const [zen, setZen] = useState(false);
   // Typed freely, committed on blur/Enter — same contract as the classic toolbar.
   const [maxPostsInput, setMaxPostsInput] = useState(String(maxPosts));
@@ -80,8 +90,9 @@ export function WorkbenchView({
     else setMaxPostsInput(String(maxPosts));
   };
 
-  // Selecting a creator (from the rail) always returns to the Workbench home.
-  const selectCreator = (id: string) => { setHome('workbench'); onSelectCreator(id); };
+  // Selecting a creator (from the rail) always returns to the Workbench home,
+  // on the Posts view.
+  const selectCreator = (id: string) => { setHome('workbench'); setMode('posts'); onSelectCreator(id); };
 
   useEffect(() => {
     invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
@@ -178,6 +189,8 @@ export function WorkbenchView({
           onOpenDownloads={onOpenDownloads}
           onOpenSettings={onOpenSettings}
           onOpenTimeline={() => setHome('timeline')}
+          onSyncSubscriptions={onSyncSubscriptions}
+          syncingSubscriptions={syncingSubscriptions}
           timelineActive={home === 'timeline'}
           downloadStatus={downloadStatus}
           downloadActiveCount={downloadActiveCount}
@@ -187,6 +200,15 @@ export function WorkbenchView({
 
       {home === 'timeline' ? (
         <TimelineView onOpenInWorkbench={(post) => { setHome('workbench'); onOpenPost(post.creator_id, post.id); }} />
+      ) : mode === 'media' && selectedCreatorId ? (
+        <MediaView
+          creatorId={selectedCreatorId}
+          creatorName={creatorName}
+          order={mediaOrder}
+          onOrderChange={onMediaOrderChange}
+          onShowPosts={() => setMode('posts')}
+          demoMode={demoMode}
+        />
       ) : (
         <div className="flex-1 flex flex-col min-w-0 h-full">
           <div className="flex-1 min-h-0 overflow-hidden relative">
@@ -213,6 +235,25 @@ export function WorkbenchView({
               title={creatorName ? `${creatorName} · ${posts.length}` : String(posts.length)}
               hint={posts.length > 0 ? t.workbench.flipHint : undefined}
               emptyText={t.workbench.noPosts}
+              leading={
+                <div className="flex items-center border rounded overflow-hidden text-[10px] flex-shrink-0 mr-1">
+                  <button
+                    className="px-2 h-6 flex items-center gap-1 bg-secondary text-secondary-foreground font-medium"
+                    title={t.mediaView.postsTab}
+                  >
+                    <FileText className="h-3 w-3" />
+                    {t.mediaView.postsTab}
+                  </button>
+                  <button
+                    onClick={() => setMode('media')}
+                    className="px-2 h-6 flex items-center gap-1 text-muted-foreground hover:bg-muted/50 transition-colors"
+                    title={t.mediaView.mediaTab}
+                  >
+                    <ImageIcon className="h-3 w-3" />
+                    {t.mediaView.mediaTab}
+                  </button>
+                </div>
+              }
               actions={
                 <>
                   {/* Sync options — hidden mid-sync, like the classic toolbar */}

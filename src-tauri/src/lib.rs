@@ -214,6 +214,7 @@ pub fn run() {
             commands::download_manager::pause_downloads,
             commands::download_manager::resume_downloads,
             commands::download_manager::cancel_download,
+            commands::download_manager::cancel_all_downloads,
             commands::download_manager::retry_download,
             commands::download_manager::retry_all_failed,
             commands::download_manager::clear_completed_downloads,

@@ -53,6 +53,10 @@ export interface Asset {
   updated_at: string;
   downloaded_at: string | null;
   download_error: string | null;
+  // The creator's original publish time for this asset's post. Populated only by
+  // queries that join `posts` (media grid, reading view) — absent on plain asset
+  // rows, hence optional.
+  published_at?: string | null;
 }
 
 export interface SyncRun {

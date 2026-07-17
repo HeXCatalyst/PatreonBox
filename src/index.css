@@ -252,28 +252,33 @@
   --glow-a:rgba(232,150,74,.14);
 }
 
-/* --- Nightwolf v3 (crisp charcoal; teal = fur, lime = eyes) --- */
+/* --- Nightwolf v4 (cool-neutral charcoal ground; two accents drawn from the
+   character: lime "eyes" as the loud pop, steel navy "markings" as the calm
+   workhorse. The ground carries NO accent tint — that olive cast was what read
+   as muddy in v3.) --- */
 .dark[data-color-theme="nightwolf"] {
-  --background:#191d16; --foreground:#eaefe1;
-  --card:#212619; --card-foreground:#eaefe1;
-  --popover:#262c1e; --popover-foreground:#eaefe1;
-  --primary:#c3e84a; --primary-foreground:#151a0c;
-  /* lime-tinted actives: selected creator / tabs / selected post all pick it up */
-  --secondary:#2c341e; --secondary-foreground:#e9f2cf;
-  --muted:#232921; --muted-foreground:#9aa591;
-  --accent:#2c341e; --accent-foreground:#eef4d8;
-  --border:rgba(195,232,74,.12); --input:rgba(195,232,74,.20); --ring:#c3e84a;
-  --sidebar:#13160f; --sidebar-foreground:#eaefe1;
-  --sidebar-primary:#c3e84a; --sidebar-primary-foreground:#151a0c;
-  --sidebar-accent:#2c341e; --sidebar-accent-foreground:#eef4d8;
-  --sidebar-border:rgba(195,232,74,.12); --sidebar-ring:#c3e84a;
-  --star:#c3e84a; --link:#c3e84a;
-  --glow-a:rgba(195,232,74,.15); --glow-b:rgba(74,161,176,.18);
+  --background:#14171a; --foreground:#e6e9ea;
+  --card:#1b1f23; --card-foreground:#e6e9ea;
+  --popover:#20252b; --popover-foreground:#e6e9ea;
+  --primary:#a3e12b; --primary-foreground:#14210a;
+  /* lime actives (loud): selected creator / tabs / selected post pick it up —
+     kept rare on purpose. */
+  --secondary:#23272c; --secondary-foreground:#e6ecd6;
+  --muted:#1f2429; --muted-foreground:#8b9296;
+  --accent:#23272c; --accent-foreground:#eef4d8;
+  --border:#2a2f34; --input:#2a2f34; --ring:#a3e12b;
+  --sidebar:#101316; --sidebar-foreground:#e6e9ea;
+  --sidebar-primary:#a3e12b; --sidebar-primary-foreground:#14210a;
+  --sidebar-accent:#23272c; --sidebar-accent-foreground:#eef4d8;
+  --sidebar-border:#2a2f34; --sidebar-ring:#a3e12b;
+  --star:#a3e12b; --link:#5b93cc;
+  --glow-a:rgba(163,225,43,.13); --glow-b:rgba(47,90,134,.20);
 }
-/* Nightwolf's teal ("the fur"): constant, structural touches that survive real
-   avatar images — a ring on avatars, the byline on each post. */
-.dark[data-color-theme="nightwolf"] .creator-avatar { box-shadow: 0 0 0 1.5px rgba(74,161,176,.55); }
-.dark[data-color-theme="nightwolf"] .post-byline { color:#4aa1b0; }
+/* Nightwolf's steel navy ("the markings", calm): constant structural touches
+   that survive real avatar images — a ring on avatars, the byline on each post.
+   Fills use the mid navy; text is lifted so it stays legible on the dark ground. */
+.dark[data-color-theme="nightwolf"] .creator-avatar { box-shadow: 0 0 0 1.5px rgba(47,90,134,.6); }
+.dark[data-color-theme="nightwolf"] .post-byline { color:#5b93cc; }
 
 /* --- Dhole (amber/rust) — dark --- */
 .dark[data-color-theme="dhole"] {
@@ -370,11 +375,11 @@
   border-radius: 2px;
   background: var(--primary);
 }
-.dark[data-color-theme="nightwolf"] .creator-row-active::before { box-shadow: 0 0 8px rgba(195,232,74,.35); }
+.dark[data-color-theme="nightwolf"] .creator-row-active::before { box-shadow: 0 0 8px rgba(163,225,43,.35); }
 
-/* Nightwolf: teal-edged asset chips (the "fur" secondary on post badges). */
-.dark[data-color-theme="nightwolf"] .asset-chip { border-color: rgba(74,161,176,.4); }
-.dark[data-color-theme="nightwolf"] .asset-chip svg { color: #4aa1b0; }
+/* Nightwolf: navy-edged asset chips (the "markings" calm accent on post badges). */
+.dark[data-color-theme="nightwolf"] .asset-chip { border-color: rgba(91,147,204,.4); }
+.dark[data-color-theme="nightwolf"] .asset-chip svg { color: #5b93cc; }
 
 /* Scrollable but scrollbar-less (the slim workbench rail): without this the
    scrollbar gutter pushes the centered avatars off-axis. */

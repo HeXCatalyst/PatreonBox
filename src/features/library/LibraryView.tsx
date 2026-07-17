@@ -139,6 +139,8 @@ function LibraryPanes({
         onOpenSearch={onOpenSearch}
         onOpenDownloads={onOpenDownloads}
         onOpenSettings={onOpenSettings}
+        onSyncSubscriptions={onSyncSubscriptions}
+        syncingSubscriptions={syncingSubscriptions}
         downloadStatus={downloadStatus}
         downloadActiveCount={downloadActiveCount}
         settingsErrorCount={settingsErrorCount}
@@ -163,6 +165,9 @@ function LibraryPanes({
         onIncrementalSyncChange={onIncrementalSyncChange}
         syncMode={syncMode}
         onSyncModeChange={onSyncModeChange}
+        mediaOrder={mediaOrder}
+        onMediaOrderChange={onMediaOrderChange}
+        demoMode={settings.demo_mode}
       />
     );
   }
@@ -513,6 +518,9 @@ export function LibraryView() {
         creatorId: selectedCreatorId,
         assetIds: null,
         enabledTypes: enabledTypes ?? null,
+        // Scope the download to the same newest-N posts the toolbar's count
+        // targets, so "10" means 10 for downloading too — not the whole archive.
+        maxPosts: maxPosts,
       });
       await refreshDownloads();
     } catch (e) {

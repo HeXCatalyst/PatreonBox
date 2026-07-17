@@ -91,6 +91,10 @@ pub async fn start_downloads(
     creator_id: Option<String>,
     asset_ids: Option<Vec<String>>,
     enabled_types: Option<Vec<String>>,
+    // When downloading a whole creator, optionally scope to just its newest N
+    // posts (matches the toolbar's post-count field). Ignored for asset-id
+    // downloads. None = every post.
+    max_posts: Option<u32>,
 ) -> Result<usize, String> {
     // Collect the assets to enqueue synchronously (rusqlite is !Send).
     struct Row { id: String, creator_id: String, source_url: String, local_path: String, file_name: String }
@@ -120,13 +124,22 @@ pub async fn start_downloads(
             }
             _ => String::new(),
         };
+        // Scope a whole-creator download to its newest N posts (published_at is
+        // an ISO 8601 string, so lexical DESC == chronological). N is a validated
+        // u32, safe to inline; the subquery reuses ?1 (the creator id).
+        let post_limit_filter = match (&creator_id, max_posts) {
+            (Some(_), Some(n)) if n > 0 => format!(
+                "AND p.id IN (SELECT id FROM posts WHERE creator_id = ?1 ORDER BY published_at DESC LIMIT {n})"
+            ),
+            _ => String::new(),
+        };
         let sql = format!(
             "SELECT a.id, p.creator_id, a.source_url, a.local_path, a.file_name
              FROM assets a JOIN posts p ON a.post_id = p.id
              WHERE {scope}
                AND a.downloaded_at IS NULL AND a.download_error IS NULL
                AND a.source_url IS NOT NULL
-               {type_filter} {id_filter}
+               {type_filter} {id_filter} {post_limit_filter}
              ORDER BY a.created_at ASC"
         );
         let mut params: Vec<rusqlite::types::Value> = vec![first_param];
@@ -220,7 +233,7 @@ pub async fn retry_download(app: AppHandle, asset_id: String) -> Result<(), Stri
     if let Ok(conn) = open_db(&app) {
         let _ = conn.execute("UPDATE assets SET download_error = NULL WHERE id = ?1", rusqlite::params![asset_id]);
     }
-    start_downloads(app, None, Some(vec![asset_id]), None).await.map(|_| ())
+    start_downloads(app, None, Some(vec![asset_id]), None, None).await.map(|_| ())
 }
 
 /// Clear all recorded failures (optionally for one creator) and re-queue them.
@@ -250,7 +263,28 @@ pub async fn retry_all_failed(app: AppHandle, creator_id: Option<String>) -> Res
             let _ = conn.execute("UPDATE assets SET download_error = NULL WHERE id = ?1", rusqlite::params![id]);
         }
     }
-    start_downloads(app, None, Some(ids), None).await
+    start_downloads(app, None, Some(ids), None, None).await
+}
+
+/// Cancel every job that isn't finished (the header's "Cancel all"): queued and
+/// failed rows are dropped; an in-flight download is flagged so its worker
+/// discards the result instead of requeuing. Completed rows are left for history.
+#[tauri::command]
+pub async fn cancel_all_downloads(app: AppHandle) {
+    let mgr_arc = app.state::<DownloadManagerState>().0.clone();
+    let mut m = mgr_arc.lock().await;
+    for id in m.order.clone() {
+        match m.entries.get(&id).map(|e| e.job.status.as_str()) {
+            Some("done") => continue,
+            Some("downloading") => {
+                if let Some(e) = m.entries.get_mut(&id) { e.job.status = "cancelled".into(); }
+            }
+            _ => {
+                m.entries.remove(&id);
+                m.order.retain(|x| x != &id);
+            }
+        }
+    }
 }
 
 /// Drop the finished-job rows from the in-memory list (files are untouched).

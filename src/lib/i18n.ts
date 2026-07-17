@@ -119,6 +119,7 @@ export interface Translations {
     zoomIn: string;
     restoreZoom: string;
     properties: string;
+    publishedAt: (date: string) => string;
     downloadedAt: (date: string) => string;
     saveToDownloads: string;
     close: string;
@@ -129,6 +130,10 @@ export interface Translations {
     count: (n: number) => string;
     newestFirst: string;
     oldestFirst: string;
+    jumpToMonth: string;
+    wheelDone: string;
+    scrollToTop: string;
+    scrollToBottom: string;
     loading: string;
     empty: string;
     select: string;
@@ -450,6 +455,7 @@ const zh: Translations = {
     zoomIn: '放大 (+)',
     restoreZoom: '还原 (0)',
     properties: '属性 (I)',
+    publishedAt: (date) => `发布于 ${date}`,
     downloadedAt: (date) => `下载于 ${date}`,
     saveToDownloads: '保存到下载',
     close: '关闭 (Esc)',
@@ -460,6 +466,10 @@ const zh: Translations = {
     count: (n) => `${n} 张`,
     newestFirst: '最新在前',
     oldestFirst: '最早在前',
+    jumpToMonth: '跳到月份',
+    wheelDone: '完成',
+    scrollToTop: '回到顶端',
+    scrollToBottom: '跳到底端',
     loading: '加载中…',
     empty: '暂无已下载的图片。先在帖子页同步/下载图片后再来这里查看。',
     select: '选择',
@@ -781,6 +791,7 @@ const en: Translations = {
     zoomIn: 'Zoom In (+)',
     restoreZoom: 'Restore (0)',
     properties: 'Properties (I)',
+    publishedAt: (date) => `Published at ${date}`,
     downloadedAt: (date) => `Downloaded at ${date}`,
     saveToDownloads: 'Save to Downloads',
     close: 'Close (Esc)',
@@ -791,6 +802,10 @@ const en: Translations = {
     count: (n) => `${n} image${n === 1 ? '' : 's'}`,
     newestFirst: 'Newest',
     oldestFirst: 'Oldest',
+    jumpToMonth: 'Jump to month',
+    wheelDone: 'Done',
+    scrollToTop: 'Back to top',
+    scrollToBottom: 'Jump to bottom',
     loading: 'Loading…',
     empty: 'No downloaded images yet. Sync/download images from the Posts view first.',
     select: 'Select',

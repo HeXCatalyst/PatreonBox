@@ -76,7 +76,11 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   const imageAssets  = assets.filter(a => isImage(a.file_name));
   const audioAssets  = assets.filter(a => a.mime_type?.startsWith("audio/") ?? false);
   const fileAssets   = assets.filter(a => !isImage(a.file_name) && !(a.mime_type?.startsWith("audio/") ?? false));
-  const downloadedImages = imageAssets.filter(a => a.downloaded_at !== null);
+  // Carry the post's publish time onto each image so the lightbox can show when
+  // the creator originally posted it (not just when we downloaded the file).
+  const downloadedImages = imageAssets
+    .filter(a => a.downloaded_at !== null)
+    .map(a => ({ ...a, published_at: post.published_at }));
 
   return (
     <div className="flex-1 flex flex-col h-full bg-card overflow-hidden relative reading-glow">

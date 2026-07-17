@@ -185,7 +185,7 @@ export async function getCreatorMedia(
   const db = await getDb();
   const dir = order === 'asc' ? 'ASC' : 'DESC';
   const rows = await db.select<Asset[]>(
-    `SELECT a.*
+    `SELECT a.*, p.published_at AS published_at
      FROM assets a
      JOIN posts p ON a.post_id = p.id
      WHERE p.creator_id = ? AND a.downloaded_at IS NOT NULL

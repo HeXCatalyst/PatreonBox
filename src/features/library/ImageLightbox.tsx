@@ -189,6 +189,9 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
           {naturalSize && <div>{naturalSize.w} × {naturalSize.h} px</div>}
           {sizeLabel && <div>{sizeLabel}</div>}
           {current.mime_type && <div>{current.mime_type}</div>}
+          {current.published_at && (
+            <div>{t.lightbox.publishedAt(new Date(current.published_at).toLocaleString())}</div>
+          )}
           {current.downloaded_at && (
             <div>{t.lightbox.downloadedAt(new Date(current.downloaded_at).toLocaleString())}</div>
           )}

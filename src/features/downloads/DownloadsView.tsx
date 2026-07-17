@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronLeft, ChevronDown, ChevronRight, Pause, Play, RotateCcw, X } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronRight, Pause, Play, RotateCcw, X, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DownloadJob } from "./useDownloadJobs";
 
@@ -113,6 +113,12 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
             <button className="px-3 py-1.5 text-xs rounded border hover:bg-muted"
               onClick={() => act(invoke("retry_all_failed", { creatorId: null }))}>
               Retry all failed
+            </button>
+          )}
+          {(downloading.length + queued.length + failed.length) > 0 && (
+            <button className="px-3 py-1.5 text-xs rounded border hover:bg-muted hover:text-destructive flex items-center gap-1.5"
+              onClick={() => act(invoke("cancel_all_downloads"))}>
+              <XCircle className="h-3.5 w-3.5" /> Cancel all
             </button>
           )}
         </div>

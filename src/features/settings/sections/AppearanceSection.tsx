@@ -11,7 +11,7 @@ const THEME_SWATCHES: Record<ColorTheme, string[]> = {
   'default':      ['#9ca3af', '#27272a'],
   'reading-room': ['#26201a', '#e8964a'],
   'dhole':        ['#33251a', '#eaa62f', '#b5522a'],
-  'nightwolf':    ['#212619', '#c3e84a', '#4aa1b0'],
+  'nightwolf':    ['#1b1f23', '#a3e12b', '#2f5a86'],
   'azure-fox':    ['#23314f', '#f0c33a', '#4a9bd8'],
 };
 

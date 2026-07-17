@@ -1,6 +1,6 @@
 import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Search, Settings, History } from "lucide-react";
+import { Search, Settings, History, RefreshCw, Loader2 } from "lucide-react";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
@@ -13,6 +13,8 @@ interface IconRailProps {
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
   onOpenTimeline: () => void;
+  onSyncSubscriptions: () => void;
+  syncingSubscriptions: boolean;
   timelineActive: boolean;
   downloadStatus: DownloadStatus;
   downloadActiveCount: number;
@@ -27,6 +29,7 @@ interface IconRailProps {
 export function IconRail({
   creators, selectedCreatorId, onSelectCreator,
   onOpenSearch, onOpenDownloads, onOpenSettings, onOpenTimeline, timelineActive,
+  onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
 }: IconRailProps) {
   const t = useTranslation();
@@ -38,9 +41,20 @@ export function IconRail({
 
   return (
     <div className="w-full h-full bg-sidebar border-r flex flex-col items-center py-3 gap-2">
-      <div className="h-8 w-8 rounded-lg bg-primary/15 text-primary grid place-items-center mb-1" title="PatreonBOX">
-        <DownloadStatusIcon status={downloadStatus} />
-      </div>
+      {/* Sync subscriptions (fetch new posts from Patreon) — the Workbench's
+          global "update" action, mirroring the classic sidebar header. A refresh
+          mark, deliberately distinct from the download-cloud below so the two
+          aren't confused. */}
+      <button
+        onClick={onSyncSubscriptions}
+        disabled={syncingSubscriptions}
+        title={t.sidebar.syncSubscriptionsTooltip}
+        className="h-9 w-9 grid place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-60 transition-colors mb-1"
+      >
+        {syncingSubscriptions
+          ? <Loader2 className="h-4 w-4 animate-spin" />
+          : <RefreshCw className="h-4 w-4" />}
+      </button>
 
       <button
         onClick={onOpenTimeline}
