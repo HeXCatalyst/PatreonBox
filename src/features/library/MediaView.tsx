@@ -16,6 +16,7 @@ const DEFAULT_SIZE = 140;
 const GAP = 4;      // grid gap in px
 const PAD = 12;     // grid padding in px
 const OVERSCAN = 6; // extra rows rendered above/below the viewport (preloads while scrolling)
+const FAST_SCROLL_PX = 70; // per-frame scroll jump above which we defer image decode
 
 type Order = "desc" | "asc";
 
@@ -63,6 +64,15 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const [viewportH, setViewportH] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const rafRef = useRef<number | null>(null);
+  // Fast-fling handling: while flinging, only cells whose image hasn't decoded
+  // yet render a cheap placeholder (first-time full-res decode is the jank).
+  // Already-decoded images stay put — they never flicker, and re-mounting a
+  // cached image is cheap.
+  const [fastScroll, setFastScroll] = useState(false);
+  const lastScrollTopRef = useRef(0);
+  const fastRef = useRef(false);
+  const fastTimerRef = useRef<number | null>(null);
+  const loadedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
@@ -128,6 +138,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   useEffect(() => {
     setScrollTop(0);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    loadedRef.current.clear();
   }, [creatorId, order]);
 
   // Track the scroll container's size (responsive columns + viewport height).
@@ -150,11 +161,26 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     if (rafRef.current != null) return; // throttle to one update per frame
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
-      setScrollTop(el.scrollTop);
+      const st = el.scrollTop;
+      const delta = Math.abs(st - lastScrollTopRef.current);
+      lastScrollTopRef.current = st;
+      setScrollTop(st);
+      // A large per-frame jump = a fast fling → defer image decode until it eases.
+      if (delta > FAST_SCROLL_PX) {
+        if (!fastRef.current) { fastRef.current = true; setFastScroll(true); }
+        if (fastTimerRef.current != null) window.clearTimeout(fastTimerRef.current);
+        fastTimerRef.current = window.setTimeout(() => {
+          fastRef.current = false;
+          setFastScroll(false);
+        }, 70);
+      }
     });
   }, []);
 
-  useEffect(() => () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); }, []);
+  useEffect(() => () => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    if (fastTimerRef.current != null) window.clearTimeout(fastTimerRef.current);
+  }, []);
 
   const getUrl = useCallback((asset: Asset) => {
     if (!imagesDir) return "";
@@ -306,14 +332,21 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                     onMouseDown={selectMode ? (e) => { e.preventDefault(); startPaint(asset.id); } : undefined}
                     onMouseEnter={selectMode ? () => { if (paintRef.current.active) applyPaint(asset.id); } : undefined}
                   >
-                    <img
-                      src={getUrl(asset)}
-                      alt={asset.file_name}
-                      className={`w-full h-full object-cover rounded ${selectMode ? "cursor-pointer" : "cursor-pointer"} ${isSelected ? "opacity-70" : ""}`}
-                      decoding="async"
-                      draggable={false}
-                      onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}
-                    />
+                    {fastScroll && !loadedRef.current.has(asset.id) ? (
+                      // Only defer images that haven't decoded yet — already-loaded
+                      // ones stay shown so they never flicker during a fling.
+                      <div className="w-full h-full rounded bg-muted/40" />
+                    ) : (
+                      <img
+                        src={getUrl(asset)}
+                        alt={asset.file_name}
+                        className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
+                        decoding="async"
+                        draggable={false}
+                        onLoad={() => loadedRef.current.add(asset.id)}
+                        onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}
+                      />
+                    )}
                     {selectMode ? (
                       <div
                         className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center pointer-events-none ${isSelected ? "bg-primary text-primary-foreground" : "bg-black/40 border border-white/60"}`}
