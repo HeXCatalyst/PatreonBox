@@ -178,6 +178,7 @@ pub fn run() {
         .manage(commands::ScrapedSubscriptionsState(std::sync::Mutex::new(None)))
         .manage(commands::ScrapedPostsRawState(std::sync::Mutex::new(None)))
         .manage(commands::comments::PostCommentsRawState(std::sync::Mutex::new(None)))
+        .manage(commands::perf::SysState(std::sync::Mutex::new(sysinfo::System::new())))
         .manage(commands::ImageDownloadCancelFlag(
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
         ))
@@ -243,6 +244,7 @@ pub fn run() {
             commands::sync_history::clear_sync_runs,
             commands::comments::fetch_post_comments,
             commands::comments::report_post_comments,
+            commands::perf::process_stats,
             commands::sync_history::get_unseen_failed_count,
             commands::sync_history::mark_sync_runs_seen,
             commands::search::search_posts,

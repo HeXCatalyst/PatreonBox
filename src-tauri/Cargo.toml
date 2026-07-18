@@ -37,6 +37,7 @@ url = "2.5"
 fastrand = "2"
 fs4 = "1"
 trash = "5"
+sysinfo = "0.32"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(unix)'.dependencies]

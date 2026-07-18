@@ -134,6 +134,20 @@ export interface Translations {
     error: string;
     unknownAuthor: string;
   };
+  perfHud: {
+    title: string;
+    fps: string;
+    frame: string;
+    heap: string;
+    pressure: string;
+    processSection: string;
+    rss: string;
+    cpu: string;
+    collapse: string;
+    expand: string;
+    close: string;
+    settingLabel: string;
+  };
   mediaView: {
     postsTab: string;
     mediaTab: string;
@@ -480,6 +494,20 @@ const zh: Translations = {
     error: '评论加载失败',
     unknownAuthor: '匿名',
   },
+  perfHud: {
+    title: 'PERF',
+    fps: 'FPS',
+    frame: '帧时',
+    heap: 'JS 内存',
+    pressure: '渲染压力',
+    processSection: '本进程 · 主进程+子进程',
+    rss: 'RSS 内存',
+    cpu: 'CPU',
+    collapse: '折叠',
+    expand: '展开',
+    close: '关闭',
+    settingLabel: '性能悬浮窗',
+  },
   mediaView: {
     postsTab: '帖子',
     mediaTab: '媒体',
@@ -825,6 +853,20 @@ const en: Translations = {
     notLoaded: 'Click Refresh to load comments',
     error: 'Failed to load comments',
     unknownAuthor: 'Anonymous',
+  },
+  perfHud: {
+    title: 'PERF',
+    fps: 'FPS',
+    frame: 'Frame',
+    heap: 'JS Heap',
+    pressure: 'Pressure',
+    processSection: 'This process · main + children',
+    rss: 'RSS',
+    cpu: 'CPU',
+    collapse: 'Collapse',
+    expand: 'Expand',
+    close: 'Close',
+    settingLabel: 'Performance HUD',
   },
   mediaView: {
     postsTab: 'Posts',

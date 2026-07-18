@@ -18,6 +18,7 @@ export interface AppSettings {
     attachments: boolean;
   };
   developer_mode_enabled: boolean;
+  perf_hud_enabled: boolean;
   debug_output_mode: 'terminal' | 'inherit' | 'none';
   custom_images_dir: string | null;
   migration_verify_mode: 'size' | 'hash';
@@ -49,6 +50,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     attachments: true,
   },
   developer_mode_enabled: false,
+  perf_hud_enabled: false,
   debug_output_mode: 'none',
   custom_images_dir: null,
   migration_verify_mode: 'size',

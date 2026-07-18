@@ -18,6 +18,7 @@ import { SettingsView } from "../settings/SettingsView";
 import { DownloadsView } from "../downloads/DownloadsView";
 import { SearchView, type SearchResult } from "../search/SearchView";
 import { WorkbenchView } from "../workbench/WorkbenchView";
+import { PerfHudGate } from "../dev/PerfHud";
 import { CommandPalette, type PaletteCommand } from "../command/CommandPalette";
 import { applyTheme } from "../../lib/theme";
 import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
@@ -803,6 +804,7 @@ export function LibraryView() {
   return (
     <SettingsProvider initial={initialSettings}>
       <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+        <PerfHudGate />
         <CommandPalette
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}

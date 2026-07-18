@@ -59,6 +59,8 @@ pub struct AppSettings {
     pub download_asset_types: DownloadAssetTypes,
     #[serde(default)]
     pub developer_mode_enabled: bool,
+    #[serde(default)]
+    pub perf_hud_enabled: bool,
     #[serde(default = "default_debug_output_mode")]
     pub debug_output_mode: String,   // "terminal" | "inherit" | "none"
     #[serde(default)]
@@ -99,6 +101,7 @@ impl Default for AppSettings {
             post_list_width: 320,
             download_asset_types: DownloadAssetTypes::default(),
             developer_mode_enabled: false,
+            perf_hud_enabled: false,
             debug_output_mode: "none".to_string(),
             custom_images_dir: None,
             migration_verify_mode: "size".to_string(),

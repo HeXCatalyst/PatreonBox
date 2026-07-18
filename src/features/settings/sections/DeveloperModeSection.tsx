@@ -50,6 +50,13 @@ export function DeveloperModeSection() {
             onCheckedChange={handleDemoModeChange}
           />
         </div>
+        <div className="flex justify-between items-center py-3 text-sm">
+          <span className="text-muted-foreground">{t.perfHud.settingLabel}</span>
+          <Switch
+            checked={settings.perf_hud_enabled}
+            onCheckedChange={(c) => updateSettings({ perf_hud_enabled: c })}
+          />
+        </div>
         <SelfCheckPanel />
       </div>
     </div>
