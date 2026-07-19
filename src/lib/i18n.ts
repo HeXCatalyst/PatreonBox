@@ -134,6 +134,21 @@ export interface Translations {
     error: string;
     unknownAuthor: string;
   };
+  favorites: {
+    title: string;
+    mediaTab: string;
+    postsTab: string;
+    countMedia: (n: number) => string;
+    countPosts: (n: number) => string;
+    filterCreator: string;
+    allCreators: string;
+    sortBy: string;
+    sortName: (k: string) => string;
+    asc: string;
+    desc: string;
+    emptyMedia: string;
+    emptyPosts: string;
+  };
   perfHud: {
     title: string;
     fps: string;
@@ -156,6 +171,8 @@ export interface Translations {
     oldestFirst: string;
     jumpToMonth: string;
     wheelDone: string;
+    favorite: string;
+    unfavorite: string;
     scrollToTop: string;
     scrollToBottom: string;
     loading: string;
@@ -494,6 +511,21 @@ const zh: Translations = {
     error: '评论加载失败',
     unknownAuthor: '匿名',
   },
+  favorites: {
+    title: '收藏',
+    mediaTab: '媒体',
+    postsTab: '帖子',
+    countMedia: (n) => `${n} 张`,
+    countPosts: (n) => `${n} 篇`,
+    filterCreator: '按创作者筛选',
+    allCreators: '全部创作者',
+    sortBy: '排序方式',
+    sortName: (k) => ({ favorited: '收藏时间', published: '发布日期', added: '下载日期', name: '文件名', size: '大小' }[k] ?? k),
+    asc: '升序',
+    desc: '降序',
+    emptyMedia: '还没有收藏的图片 — 在媒体视图里点右上角星标',
+    emptyPosts: '还没有收藏的帖子',
+  },
   perfHud: {
     title: 'PERF',
     fps: 'FPS',
@@ -516,6 +548,8 @@ const zh: Translations = {
     oldestFirst: '最早在前',
     jumpToMonth: '跳到月份',
     wheelDone: '完成',
+    favorite: '收藏',
+    unfavorite: '取消收藏',
     scrollToTop: '回到顶端',
     scrollToBottom: '跳到底端',
     loading: '加载中…',
@@ -854,6 +888,21 @@ const en: Translations = {
     error: 'Failed to load comments',
     unknownAuthor: 'Anonymous',
   },
+  favorites: {
+    title: 'Favorites',
+    mediaTab: 'Media',
+    postsTab: 'Posts',
+    countMedia: (n) => `${n} images`,
+    countPosts: (n) => `${n} posts`,
+    filterCreator: 'Filter by creator',
+    allCreators: 'All creators',
+    sortBy: 'Sort by',
+    sortName: (k) => ({ favorited: 'Favorited', published: 'Published', added: 'Downloaded', name: 'Name', size: 'Size' }[k] ?? k),
+    asc: 'Ascending',
+    desc: 'Descending',
+    emptyMedia: 'No favorited images yet — star one from the Media view',
+    emptyPosts: 'No starred posts yet',
+  },
   perfHud: {
     title: 'PERF',
     fps: 'FPS',
@@ -876,6 +925,8 @@ const en: Translations = {
     oldestFirst: 'Oldest',
     jumpToMonth: 'Jump to month',
     wheelDone: 'Done',
+    favorite: 'Favorite',
+    unfavorite: 'Remove from favorites',
     scrollToTop: 'Back to top',
     scrollToBottom: 'Jump to bottom',
     loading: 'Loading…',

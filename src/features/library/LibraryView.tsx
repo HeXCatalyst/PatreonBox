@@ -19,6 +19,7 @@ import { DownloadsView } from "../downloads/DownloadsView";
 import { SearchView, type SearchResult } from "../search/SearchView";
 import { WorkbenchView } from "../workbench/WorkbenchView";
 import { PerfHudGate } from "../dev/PerfHud";
+import { FavoritesView } from "../favorites/FavoritesView";
 import { CommandPalette, type PaletteCommand } from "../command/CommandPalette";
 import { applyTheme } from "../../lib/theme";
 import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
@@ -75,6 +76,7 @@ interface LibraryPanesProps {
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
   onOpenSearch: () => void;
+  onOpenFavorites: () => void;
   downloadActiveCount: number;
   downloadStatus: DownloadStatus;
   settingsErrorCount: number;
@@ -107,7 +109,7 @@ function LibraryPanes({
   postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
   syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
-  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, onOpenSearch, downloadActiveCount, downloadStatus, settingsErrorCount, onSelectStarred,
+  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, onOpenSearch, onOpenFavorites, downloadActiveCount, downloadStatus, settingsErrorCount, onSelectStarred,
   onSelectPost, onOpenPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
   onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
   onPauseImages, onCancelImages, onToggleStar,
@@ -138,6 +140,7 @@ function LibraryPanes({
         onOpenPost={onOpenPost}
         onToggleStar={onToggleStar}
         onOpenSearch={onOpenSearch}
+        onOpenFavorites={onOpenFavorites}
         onOpenDownloads={onOpenDownloads}
         onOpenSettings={onOpenSettings}
         onSyncSubscriptions={onSyncSubscriptions}
@@ -286,7 +289,7 @@ function LibraryPanes({
 }
 
 export function LibraryView() {
-  const [view, setView] = useState<'library' | 'settings' | 'downloads' | 'search'>('library');
+  const [view, setView] = useState<'library' | 'settings' | 'downloads' | 'search' | 'favorites'>('library');
   const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'history'>('account');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, refresh: refreshDownloads } = useDownloadJobs();
@@ -650,11 +653,12 @@ export function LibraryView() {
     setImageFailedCount(0);
   };
 
+  // "Starred" now opens the unified Favorites page (starred posts + favourited
+  // images) rather than filtering the classic post list in place.
   const handleSelectStarred = () => {
-    setShowStarred(true);
-    setCreatorTab('posts');
-    setSelectedCreatorId(null);
+    setShowStarred(false);
     setSelectedPost(null);
+    setView('favorites');
   };
 
   const handleToggleStar = async (post: Post, newStarred: boolean) => {
@@ -819,7 +823,12 @@ export function LibraryView() {
           </div>
         )}
         <div className="flex flex-1 overflow-hidden">
-        {view === 'settings' ? (
+        {view === 'favorites' ? (
+          <FavoritesView
+            onClose={() => setView('library')}
+            onOpenPost={handleOpenPost}
+          />
+        ) : view === 'settings' ? (
           <SettingsView onClose={() => setView('library')} initialSection={settingsInitialSection} />
         ) : view === 'downloads' ? (
           <DownloadsView
@@ -874,6 +883,7 @@ export function LibraryView() {
             onDeleteCreator={handleDeleteCreator}
             onOpenSettings={handleOpenSettings}
             onSelectStarred={handleSelectStarred}
+            onOpenFavorites={handleSelectStarred}
             onSelectPost={setSelectedPost}
             onOpenPost={handleOpenPost}
             onSyncPosts={handleSyncPosts}

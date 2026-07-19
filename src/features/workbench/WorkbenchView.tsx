@@ -23,6 +23,7 @@ interface WorkbenchViewProps {
   onOpenPost: (creatorId: string, postId: string) => void;
   onToggleStar?: (post: Post, newStarred: boolean) => void;
   onOpenSearch: () => void;
+  onOpenFavorites: () => void;
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
   onSyncSubscriptions: () => void;
@@ -65,7 +66,7 @@ const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
 export function WorkbenchView({
   creators, selectedCreatorId, onSelectCreator,
   posts, selectedPost, selectedPostAssets, onSelectPost, onOpenPost, onToggleStar,
-  onOpenSearch, onOpenDownloads, onOpenSettings,
+  onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings,
   onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
   onSyncPosts, onSyncImages, isSyncingPosts, isSyncingImages,
@@ -80,6 +81,8 @@ export function WorkbenchView({
   const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
   const [mode, setMode] = useState<'posts' | 'media'>('posts');
   const [zen, setZen] = useState(false);
+  // Portal target in the shared top bar for Media mode's own controls.
+  const [mediaSlot, setMediaSlot] = useState<HTMLDivElement | null>(null);
   // Typed freely, committed on blur/Enter — same contract as the classic toolbar.
   const [maxPostsInput, setMaxPostsInput] = useState(String(maxPosts));
 
@@ -190,6 +193,7 @@ export function WorkbenchView({
           selectedCreatorId={home === 'timeline' ? null : selectedCreatorId}
           onSelectCreator={selectCreator}
           onOpenSearch={onOpenSearch}
+          onOpenFavorites={onOpenFavorites}
           onOpenDownloads={onOpenDownloads}
           onOpenSettings={onOpenSettings}
           onOpenTimeline={() => setHome('timeline')}
@@ -204,124 +208,148 @@ export function WorkbenchView({
 
       {home === 'timeline' ? (
         <TimelineView onOpenInWorkbench={(post) => { setHome('workbench'); onOpenPost(post.creator_id, post.id); }} />
-      ) : mode === 'media' && selectedCreatorId ? (
-        <MediaView
-          creatorId={selectedCreatorId}
-          creatorName={creatorName}
-          order={mediaOrder}
-          onOrderChange={onMediaOrderChange}
-          onShowPosts={() => setMode('posts')}
-          demoMode={demoMode}
-        />
       ) : (
         <div className="flex-1 flex flex-col min-w-0 h-full">
-          <div className="flex-1 min-h-0 overflow-hidden relative">
-            {selectedPost && (
-              <button
-                onClick={() => setZen(true)}
-                title={`${t.workbench.zen} · F`}
-                className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground bg-card/80 backdrop-blur-sm border rounded-full px-3 py-1.5"
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-                {t.workbench.zen}
-              </button>
-            )}
-            <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
-          </div>
-          {/* Shown whenever a creator is picked — even with zero posts, so its
-              Sync button is reachable for a freshly-added creator. */}
+          {/* Shared top bar — identical chrome in both Posts and Media modes, so
+              the bottom strip can stay a pure filmstrip. Media-specific controls
+              portal themselves into the slot below. */}
           {selectedCreatorId && (
+            <div className="flex items-center gap-2.5 px-3 py-2 border-b flex-wrap flex-shrink-0">
+              <div className="flex items-center border rounded overflow-hidden text-[11px] flex-shrink-0">
+                <button
+                  onClick={() => setMode('posts')}
+                  title={t.mediaView.postsTab}
+                  className={mode === 'posts'
+                    ? "px-2.5 h-6 flex items-center gap-1 bg-secondary text-secondary-foreground font-medium"
+                    : "px-2.5 h-6 flex items-center gap-1 text-muted-foreground hover:bg-muted/50 transition-colors"}
+                >
+                  <FileText className="h-3 w-3" />
+                  {t.mediaView.postsTab}
+                </button>
+                <button
+                  onClick={() => setMode('media')}
+                  title={t.mediaView.mediaTab}
+                  className={mode === 'media'
+                    ? "px-2.5 h-6 flex items-center gap-1 bg-secondary text-secondary-foreground font-medium"
+                    : "px-2.5 h-6 flex items-center gap-1 text-muted-foreground hover:bg-muted/50 transition-colors"}
+                >
+                  <ImageIcon className="h-3 w-3" />
+                  {t.mediaView.mediaTab}
+                </button>
+              </div>
+
+              {creatorName && (
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate flex-shrink-0">
+                  {creatorName}{mode === 'posts' ? ' \u00b7 ' + posts.length : ''}
+                </span>
+              )}
+
+              {/* Media mode's own controls land here (portaled from MediaView) */}
+              <div ref={setMediaSlot} className="flex items-center gap-3 flex-wrap" />
+
+              <span className="flex-1" />
+
+              {/* Sync options — hidden mid-sync, shared by both modes */}
+              {!isSyncingPosts && !isSyncingImages && (
+                <>
+                  <input
+                    type="number"
+                    min={1}
+                    value={maxPostsInput}
+                    onChange={e => setMaxPostsInput(e.target.value)}
+                    onBlur={commitMaxPosts}
+                    onKeyDown={e => e.key === 'Enter' && commitMaxPosts()}
+                    title={t.postList.maxPostsTooltip}
+                    className="h-6 w-12 text-[11px] px-1 border rounded bg-background text-center flex-shrink-0"
+                  />
+                  <label
+                    title={t.postList.onlyNewPostsTooltip}
+                    className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none flex-shrink-0"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={incrementalSync}
+                      onChange={e => onIncrementalSyncChange(e.target.checked)}
+                      className="h-3 w-3"
+                    />
+                    {t.postList.onlyNewPosts}
+                  </label>
+                  <button
+                    onClick={() => onSyncModeChange(syncMode === 'normal' ? 'full' : 'normal')}
+                    title={syncMode === 'normal' ? t.postList.modeNormalDesc : t.postList.modeFullDesc}
+                    className="text-[11px] font-medium text-muted-foreground hover:text-foreground border rounded-full px-2 py-1 transition-colors flex-shrink-0"
+                  >
+                    {syncMode === 'normal' ? t.postList.modeNormalBare : t.postList.modeFullBare}
+                  </button>
+                </>
+              )}
+              <Button
+                variant="default"
+                size="xs"
+                onClick={onSyncPosts}
+                disabled={isSyncingPosts}
+                title={t.workbench.syncPosts}
+                className="flex-shrink-0"
+              >
+                <RefreshCw className={isSyncingPosts ? "animate-spin" : ""} />
+                {isSyncingPosts
+                  ? (syncTotal > 0 ? syncProgress + '/' + syncTotal : String(syncProgress || ""))
+                  : t.workbench.syncPosts}
+              </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => { void onSyncImages(); }}
+                disabled={isSyncingImages}
+                title={t.workbench.downloadAssets}
+              >
+                <ImageDown className={isSyncingImages ? "animate-pulse" : ""} />
+                {isSyncingImages
+                  ? (imageTotal > 0 ? imageProgress + '/' + imageTotal : String(imageProgress || ""))
+                  : t.workbench.downloadAssets}
+              </Button>
+            </div>
+          )}
+
+          <div className="flex-1 min-h-0 overflow-hidden relative">
+            {mode === 'media' && selectedCreatorId ? (
+              <MediaView
+                creatorId={selectedCreatorId}
+                creatorName={creatorName}
+                order={mediaOrder}
+                onOrderChange={onMediaOrderChange}
+                onShowPosts={() => setMode('posts')}
+                demoMode={demoMode}
+                embedded
+                controlsSlot={mediaSlot}
+              />
+            ) : (
+              <>
+                {selectedPost && (
+                  <button
+                    onClick={() => setZen(true)}
+                    title={t.workbench.zen + ' \u00b7 F'}
+                    className="absolute top-3 right-3 z-10 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground bg-card/80 backdrop-blur-sm border rounded-full px-3 py-1.5"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                    {t.workbench.zen}
+                  </button>
+                )}
+                <ReadingView post={selectedPost} assets={selectedPostAssets} onToggleStar={onToggleStar} />
+              </>
+            )}
+          </div>
+
+          {/* Bottom: a pure flip strip now — all shared chrome moved up top. */}
+          {mode === 'posts' && selectedCreatorId && (
             <FilmstripDock
               posts={posts}
               selectedPostId={selectedPost?.id ?? null}
               onSelect={onSelectPost}
               thumbFor={thumbFor}
-              title={creatorName ? `${creatorName} · ${posts.length}` : String(posts.length)}
+              title=""
               hint={posts.length > 0 ? t.workbench.flipHint : undefined}
               emptyText={t.workbench.noPosts}
-              leading={
-                <div className="flex items-center border rounded overflow-hidden text-[10px] flex-shrink-0 mr-1">
-                  <button
-                    className="px-2 h-6 flex items-center gap-1 bg-secondary text-secondary-foreground font-medium"
-                    title={t.mediaView.postsTab}
-                  >
-                    <FileText className="h-3 w-3" />
-                    {t.mediaView.postsTab}
-                  </button>
-                  <button
-                    onClick={() => setMode('media')}
-                    className="px-2 h-6 flex items-center gap-1 text-muted-foreground hover:bg-muted/50 transition-colors"
-                    title={t.mediaView.mediaTab}
-                  >
-                    <ImageIcon className="h-3 w-3" />
-                    {t.mediaView.mediaTab}
-                  </button>
-                </div>
-              }
-              actions={
-                <>
-                  {/* Sync options — hidden mid-sync, like the classic toolbar */}
-                  {!isSyncingPosts && !isSyncingImages && (
-                    <>
-                      <input
-                        type="number"
-                        min={1}
-                        value={maxPostsInput}
-                        onChange={e => setMaxPostsInput(e.target.value)}
-                        onBlur={commitMaxPosts}
-                        onKeyDown={e => e.key === 'Enter' && commitMaxPosts()}
-                        title={t.postList.maxPostsTooltip}
-                        className="h-6 w-12 text-[11px] px-1 border rounded bg-background text-center flex-shrink-0"
-                      />
-                      <label
-                        title={t.postList.onlyNewPostsTooltip}
-                        className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none flex-shrink-0"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={incrementalSync}
-                          onChange={e => onIncrementalSyncChange(e.target.checked)}
-                          className="h-3 w-3"
-                        />
-                        {t.postList.onlyNewPosts}
-                      </label>
-                      <button
-                        onClick={() => onSyncModeChange(syncMode === 'normal' ? 'full' : 'normal')}
-                        title={syncMode === 'normal' ? t.postList.modeNormalDesc : t.postList.modeFullDesc}
-                        className="text-[11px] font-medium text-muted-foreground hover:text-foreground border rounded-full px-2 py-1 transition-colors flex-shrink-0"
-                      >
-                        {syncMode === 'normal' ? t.postList.modeNormalBare : t.postList.modeFullBare}
-                      </button>
-                    </>
-                  )}
-                  {/* Sync = the primary action (accent-filled); Download = secondary. */}
-                  <Button
-                    variant="default"
-                    size="xs"
-                    onClick={onSyncPosts}
-                    disabled={isSyncingPosts}
-                    title={t.workbench.syncPosts}
-                    className="flex-shrink-0"
-                  >
-                    <RefreshCw className={isSyncingPosts ? "animate-spin" : ""} />
-                    {isSyncingPosts
-                      ? (syncTotal > 0 ? `${syncProgress}/${syncTotal}` : String(syncProgress || ""))
-                      : t.workbench.syncPosts}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    onClick={() => { void onSyncImages(); }}
-                    disabled={isSyncingImages}
-                    title={t.workbench.downloadAssets}
-                  >
-                    <ImageDown className={isSyncingImages ? "animate-pulse" : ""} />
-                    {isSyncingImages
-                      ? (imageTotal > 0 ? `${imageProgress}/${imageTotal}` : String(imageProgress || ""))
-                      : t.workbench.downloadAssets}
-                  </Button>
-                </>
-              }
             />
           )}
         </div>

@@ -125,6 +125,15 @@ pub fn run() {
                   CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // Per-image favourites. A timestamp rather than a flag so the
+            // favourites view can sort by when it was favourited (NULL = not).
+            version: 9,
+            description: "add_favorited_at_to_assets",
+            sql: "ALTER TABLE assets ADD COLUMN favorited_at TEXT;
+                  CREATE INDEX IF NOT EXISTS idx_assets_favorited ON assets(favorited_at);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

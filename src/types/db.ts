@@ -53,10 +53,19 @@ export interface Asset {
   updated_at: string;
   downloaded_at: string | null;
   download_error: string | null;
+  /** When this image was favourited; NULL = not a favourite. */
+  favorited_at?: string | null;
   // The creator's original publish time for this asset's post. Populated only by
   // queries that join `posts` (media grid, reading view) — absent on plain asset
   // rows, hence optional.
   published_at?: string | null;
+}
+
+/** A favourited image joined with the creator/post it belongs to. */
+export interface FavoriteAsset extends Asset {
+  creator_id: string;
+  creator_name: string;
+  post_title: string | null;
 }
 
 export interface Comment {

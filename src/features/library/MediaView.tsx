@@ -1,8 +1,9 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check, CalendarClock } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check, CalendarClock, Star } from "lucide-react";
 import { Asset } from "../../types/db";
-import { getCreatorMedia } from "../../lib/db";
+import { getCreatorMedia, toggleFavoriteAsset } from "../../lib/db";
 import { getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import { ImageLightbox } from "./ImageLightbox";
 import { MediaTimeScrubber } from "./MediaTimeScrubber";
@@ -27,6 +28,10 @@ interface MediaViewProps {
   onOrderChange: (order: Order) => void;
   onShowPosts: () => void;
   demoMode: boolean;
+  /** Workbench embeds this view under a shared top bar: hide our own header and
+   *  portal the media-specific controls into the slot the parent provides. */
+  embedded?: boolean;
+  controlsSlot?: HTMLElement | null;
 }
 
 /** Aggregate a demo creator's downloaded images across all posts, date-ordered. */
@@ -41,7 +46,7 @@ function loadDemoMedia(creatorId: string, order: Order): Asset[] {
       .map(a => ({ ...a, published_at: p.published_at })));
 }
 
-export function MediaView({ creatorId, creatorName, order, onOrderChange, onShowPosts, demoMode }: MediaViewProps) {
+export function MediaView({ creatorId, creatorName, order, onOrderChange, onShowPosts, demoMode, embedded, controlsSlot }: MediaViewProps) {
   const t = useTranslation();
   const [media, setMedia] = useState<Asset[]>([]);
   const [imagesDir, setImagesDir] = useState<string>("");
@@ -120,6 +125,19 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   }, []);
 
   const exitSelect = () => { setSelectMode(false); setSelected(new Set()); paintRef.current.active = false; };
+
+  // Favourite a single image. Optimistic: flip locally, revert if the write fails.
+  const toggleFavorite = async (asset: Asset) => {
+    if (demoMode) return;
+    const next = asset.favorited_at ? null : new Date().toISOString();
+    setMedia(prev => prev.map(m => (m.id === asset.id ? { ...m, favorited_at: next } : m)));
+    try {
+      await toggleFavoriteAsset(asset.id, next);
+    } catch (e) {
+      console.error("favorite failed", e);
+      setMedia(prev => prev.map(m => (m.id === asset.id ? { ...m, favorited_at: asset.favorited_at ?? null } : m)));
+    }
+  };
 
   const handleDeleteSelected = async () => {
     const ids = Array.from(selected);
@@ -212,9 +230,74 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const visible = media.slice(startIdx, endIdx);
   const offsetY = PAD + startRow * rowH;
 
+  // The media-specific controls. Rendered in this view's own header normally;
+  // when embedded (Workbench), they're portaled into the shared top bar instead
+  // so both Posts and Media modes share one row of chrome.
+  const rightControls = selectMode ? (
+    <div className="flex items-center gap-2 flex-shrink-0">
+      <span className="text-xs text-muted-foreground tabular-nums">{t.mediaView.selectedCount(selected.size)}</span>
+      <button
+        onClick={() => setConfirmOpen(true)}
+        disabled={selected.size === 0}
+        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-destructive border-destructive/50 hover:bg-destructive/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        {t.mediaView.deleteSelected}
+      </button>
+      <button
+        onClick={exitSelect}
+        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+      >
+        <X className="h-3.5 w-3.5" />
+        {t.mediaView.cancel}
+      </button>
+    </div>
+  ) : (
+    <div className="flex items-center gap-3 flex-shrink-0">
+      <button
+        onClick={() => setWheelOpen(true)}
+        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+        title={t.mediaView.jumpToMonth}
+      >
+        <CalendarClock className="h-3.5 w-3.5" />
+        {t.mediaView.jumpToMonth}
+      </button>
+      <button
+        onClick={() => setSelectMode(true)}
+        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+      >
+        <CheckSquare className="h-3.5 w-3.5" />
+        {t.mediaView.select}
+      </button>
+      <button
+        onClick={() => onOrderChange(order === "desc" ? "asc" : "desc")}
+        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+        title={order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
+      >
+        {order === "desc"
+          ? <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+          : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
+        {order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
+      </button>
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-muted-foreground">{t.imageGallery.small}</span>
+        <input
+          type="range" min="80" max="400" step="8"
+          value={size}
+          onChange={handleSizeChange}
+          className="w-20 h-1 accent-primary cursor-pointer"
+        />
+        <span className="text-xs text-muted-foreground">{t.imageGallery.large}</span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
-      {/* Header: tab toggle + count (left), sort + size (right) */}
+      {embedded
+        ? (controlsSlot ? createPortal(rightControls, controlsSlot) : null)
+        : (
+      /* Header: tab toggle + count (left), sort + size (right) */
       <div className="p-4 border-b flex items-center justify-between gap-3 flex-wrap bg-background">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-7 flex items-center border rounded text-xs bg-background overflow-hidden flex-shrink-0">
@@ -240,65 +323,9 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
           )}
         </div>
 
-        {selectMode ? (
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs text-muted-foreground tabular-nums">{t.mediaView.selectedCount(selected.size)}</span>
-            <button
-              onClick={() => setConfirmOpen(true)}
-              disabled={selected.size === 0}
-              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-destructive border-destructive/50 hover:bg-destructive/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t.mediaView.deleteSelected}
-            </button>
-            <button
-              onClick={exitSelect}
-              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <X className="h-3.5 w-3.5" />
-              {t.mediaView.cancel}
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <button
-              onClick={() => setWheelOpen(true)}
-              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              title={t.mediaView.jumpToMonth}
-            >
-              <CalendarClock className="h-3.5 w-3.5" />
-              {t.mediaView.jumpToMonth}
-            </button>
-            <button
-              onClick={() => setSelectMode(true)}
-              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <CheckSquare className="h-3.5 w-3.5" />
-              {t.mediaView.select}
-            </button>
-            <button
-              onClick={() => onOrderChange(order === "desc" ? "asc" : "desc")}
-              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              title={order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
-            >
-              {order === "desc"
-                ? <ArrowDownWideNarrow className="h-3.5 w-3.5" />
-                : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
-              {order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
-            </button>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">{t.imageGallery.small}</span>
-              <input
-                type="range" min="80" max="400" step="8"
-                value={size}
-                onChange={handleSizeChange}
-                className="w-20 h-1 accent-primary cursor-pointer"
-              />
-              <span className="text-xs text-muted-foreground">{t.imageGallery.large}</span>
-            </div>
-          </div>
-        )}
+        {rightControls}
       </div>
+        )}
 
       {/* Grid — virtualized: only rows near the viewport are in the DOM.
           Wrapped in a relative box so the time scrubber can overlay the strip. */}
@@ -354,6 +381,14 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                         {isSelected && <Check className="h-3.5 w-3.5" />}
                       </div>
                     ) : (
+                      <>
+                      <button
+                        className={`absolute top-1.5 right-1.5 rounded-full p-1 transition-opacity bg-black/50 hover:bg-black/70 ${asset.favorited_at ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                        title={asset.favorited_at ? t.mediaView.unfavorite : t.mediaView.favorite}
+                        onClick={e => { e.stopPropagation(); void toggleFavorite(asset); }}
+                      >
+                        <Star className={`h-3 w-3 ${asset.favorited_at ? "fill-star text-star" : "text-white"}`} />
+                      </button>
                       <button
                         className="absolute bottom-1.5 right-1.5 bg-black/50 hover:bg-black/70 rounded p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                         title={t.imageGallery.saveToDownloads}
@@ -361,6 +396,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                       >
                         <Download className="h-3 w-3 text-white" />
                       </button>
+                      </>
                     )}
                   </div>
                 );

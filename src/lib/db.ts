@@ -1,5 +1,5 @@
 import Database from '@tauri-apps/plugin-sql';
-import { Creator, Post, Asset, Comment } from '../types/db';
+import { Creator, Post, Asset, Comment, FavoriteAsset } from '../types/db';
 
 let dbInstance: Database | null = null;
 
@@ -15,6 +15,13 @@ export async function getDb(): Promise<Database> {
 
     await dbInstance.execute(
       "ALTER TABLE posts ADD COLUMN min_cents_pledged_to_view INTEGER"
+    ).catch((e: unknown) => {
+      if (!String(e).includes('duplicate column')) throw e;
+    });
+
+    // Per-image favourite timestamp (belt-and-suspenders alongside migration v9).
+    await dbInstance.execute(
+      "ALTER TABLE assets ADD COLUMN favorited_at TEXT"
     ).catch((e: unknown) => {
       if (!String(e).includes('duplicate column')) throw e;
     });
@@ -240,6 +247,49 @@ export async function upsertCreator(creator: Creator) {
 // -----------------------------------------------------------------------------
 // STAR
 // -----------------------------------------------------------------------------
+
+export type FavoriteSort = 'favorited' | 'name' | 'size' | 'published' | 'added';
+
+/**
+ * Favourited images across every creator (or one, when `creatorId` is given).
+ * Only downloaded files are listed, since the grid renders them from disk.
+ */
+export async function getFavoriteMedia(
+  creatorId: string | null,
+  sort: FavoriteSort = 'favorited',
+  dir: 'asc' | 'desc' = 'desc',
+): Promise<FavoriteAsset[]> {
+  const db = await getDb();
+  // Whitelisted so the sort key can never be injected into the SQL.
+  const COLS: Record<FavoriteSort, string> = {
+    favorited: 'a.favorited_at',
+    name: 'a.file_name',
+    size: 'a.byte_size',
+    published: 'p.published_at',
+    added: 'a.downloaded_at',
+  };
+  const col = COLS[sort] ?? COLS.favorited;
+  const order = dir === 'asc' ? 'ASC' : 'DESC';
+  const binds: unknown[] = [];
+  let where = 'a.favorited_at IS NOT NULL AND a.downloaded_at IS NOT NULL';
+  if (creatorId) { where += ' AND p.creator_id = ?'; binds.push(creatorId); }
+  return db.select<FavoriteAsset[]>(
+    `SELECT a.*, p.published_at AS published_at, p.creator_id AS creator_id,
+            p.title AS post_title, c.name AS creator_name
+     FROM assets a
+     JOIN posts p ON a.post_id = p.id
+     JOIN creators c ON p.creator_id = c.id
+     WHERE ${where}
+     ORDER BY ${col} ${order}, a.id ASC`,
+    binds,
+  );
+}
+
+/** Mark/unmark a single image as a favourite (timestamp doubles as the flag). */
+export async function toggleFavoriteAsset(assetId: string, favoritedAt: string | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE assets SET favorited_at = ? WHERE id = ?", [favoritedAt, assetId]);
+}
 
 export async function toggleStarPost(postId: string, star: boolean): Promise<void> {
   const db = await getDb();

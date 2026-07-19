@@ -1,6 +1,6 @@
 import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Search, Settings, History, RefreshCw, Loader2 } from "lucide-react";
+import { Search, Settings, History, RefreshCw, Loader2, Star } from "lucide-react";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
@@ -10,6 +10,7 @@ interface IconRailProps {
   selectedCreatorId: string | null;
   onSelectCreator: (id: string) => void;
   onOpenSearch: () => void;
+  onOpenFavorites: () => void;
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
   onOpenTimeline: () => void;
@@ -28,7 +29,7 @@ interface IconRailProps {
  */
 export function IconRail({
   creators, selectedCreatorId, onSelectCreator,
-  onOpenSearch, onOpenDownloads, onOpenSettings, onOpenTimeline, timelineActive,
+  onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings, onOpenTimeline, timelineActive,
   onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
 }: IconRailProps) {
@@ -89,6 +90,10 @@ export function IconRail({
       </div>
 
       <div className="flex flex-col items-center gap-1 pt-2 border-t w-full">
+        <button onClick={onOpenFavorites} title={t.favorites.title}
+          className="h-9 w-9 grid place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+          <Star className="h-4 w-4" />
+        </button>
         <button onClick={onOpenSearch} title={t.sidebar.search}
           className="h-9 w-9 grid place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
           <Search className="h-4 w-4" />
