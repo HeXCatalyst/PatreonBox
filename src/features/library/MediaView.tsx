@@ -1,9 +1,9 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check, CalendarClock, Star } from "lucide-react";
+import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check, CalendarClock, Star, Play, Music } from "lucide-react";
 import { Asset } from "../../types/db";
-import { getCreatorMedia, toggleFavoriteAsset } from "../../lib/db";
+import { getCreatorMedia, toggleFavoriteAsset, mediaKindOf, type MediaKind } from "../../lib/db";
 import { getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import { ImageLightbox } from "./ImageLightbox";
 import { MediaTimeScrubber } from "./MediaTimeScrubber";
@@ -57,6 +57,8 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [wheelOpen, setWheelOpen] = useState(false);
+  // Which media kinds to show — 'all' or a single kind.
+  const [kindFilter, setKindFilter] = useState<'all' | MediaKind>('all');
   const [size, setSize] = useState<number>(() => {
     const stored = localStorage.getItem(SIZE_KEY);
     return stored ? parseInt(stored, 10) : DEFAULT_SIZE;
@@ -88,7 +90,8 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     setLoading(true);
     const load = async () => {
       try {
-        const items = demoMode ? loadDemoMedia(creatorId, order) : await getCreatorMedia(creatorId, order);
+        const kinds: MediaKind[] = kindFilter === 'all' ? ['image', 'video', 'audio'] : [kindFilter];
+        const items = demoMode ? loadDemoMedia(creatorId, order) : await getCreatorMedia(creatorId, order, kinds);
         if (!cancelled) setMedia(items);
       } catch (e) {
         console.error("Failed to load creator media", e);
@@ -99,7 +102,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     };
     load();
     return () => { cancelled = true; };
-  }, [creatorId, order, demoMode, reloadKey]);
+  }, [creatorId, order, demoMode, reloadKey, kindFilter]);
 
   // Drag-to-select: press on a cell and drag across others to paint a selection.
   // The first cell decides the mode (add vs remove); subsequent cells follow it.
@@ -254,6 +257,17 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     </div>
   ) : (
     <div className="flex items-center gap-3 flex-shrink-0">
+      <div className="h-7 flex items-center border rounded text-xs overflow-hidden flex-shrink-0">
+        {(['all', 'image', 'video', 'audio'] as const).map(k => (
+          <button
+            key={k}
+            onClick={() => setKindFilter(k)}
+            className={`px-2.5 h-full transition-colors ${kindFilter === k ? "bg-secondary text-secondary-foreground font-medium" : "text-muted-foreground hover:bg-muted/50"}`}
+          >
+            {t.mediaView.kindName(k)}
+          </button>
+        ))}
+      </div>
       <button
         onClick={() => setWheelOpen(true)}
         className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
@@ -359,21 +373,56 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                     onMouseDown={selectMode ? (e) => { e.preventDefault(); startPaint(asset.id); } : undefined}
                     onMouseEnter={selectMode ? () => { if (paintRef.current.active) applyPaint(asset.id); } : undefined}
                   >
-                    {fastScroll && !loadedRef.current.has(asset.id) ? (
-                      // Only defer images that haven't decoded yet — already-loaded
-                      // ones stay shown so they never flicker during a fling.
-                      <div className="w-full h-full rounded bg-muted/40" />
-                    ) : (
-                      <img
-                        src={getUrl(asset)}
-                        alt={asset.file_name}
-                        className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
-                        decoding="async"
-                        draggable={false}
-                        onLoad={() => loadedRef.current.add(asset.id)}
-                        onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}
-                      />
-                    )}
+                    {(() => {
+                      const kind = mediaKindOf(asset.file_name);
+                      if (kind === "video") {
+                        // Poster frame via <video preload="metadata"> (first frame),
+                        // with a play badge; click opens the lightbox player.
+                        return (
+                          <div className={`relative w-full h-full rounded overflow-hidden cursor-pointer bg-black ${isSelected ? "opacity-70" : ""}`}
+                            onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}>
+                            <video
+                              src={`${getUrl(asset)}#t=0.1`}
+                              preload="metadata"
+                              muted
+                              playsInline
+                              className="w-full h-full object-cover pointer-events-none"
+                            />
+                            <div className="absolute inset-0 grid place-items-center pointer-events-none">
+                              <span className="h-9 w-9 rounded-full bg-black/55 border border-white/25 grid place-items-center">
+                                <Play className="h-4 w-4 text-white fill-white" />
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (kind === "audio") {
+                        return (
+                          <div className={`relative w-full h-full rounded overflow-hidden cursor-pointer bg-muted/40 grid place-items-center ${isSelected ? "opacity-70" : ""}`}
+                            onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}>
+                            <Music className="h-8 w-8 text-muted-foreground" />
+                            <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-black/70 to-transparent pointer-events-none">
+                              <div className="text-[10px] text-white truncate">{asset.file_name}</div>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return fastScroll && !loadedRef.current.has(asset.id) ? (
+                        // Only defer images that haven't decoded yet — already-loaded
+                        // ones stay shown so they never flicker during a fling.
+                        <div className="w-full h-full rounded bg-muted/40" />
+                      ) : (
+                        <img
+                          src={getUrl(asset)}
+                          alt={asset.file_name}
+                          className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
+                          decoding="async"
+                          draggable={false}
+                          onLoad={() => loadedRef.current.add(asset.id)}
+                          onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}
+                        />
+                      );
+                    })()}
                     {selectMode ? (
                       <div
                         className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center pointer-events-none ${isSelected ? "bg-primary text-primary-foreground" : "bg-black/40 border border-white/60"}`}

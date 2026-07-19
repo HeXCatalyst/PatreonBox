@@ -1,7 +1,8 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { Asset } from "../../types/db";
-import { Download, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Info, RotateCcw } from "lucide-react";
+import { Download, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Info, RotateCcw, Maximize2, Minimize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "../../lib/i18n";
 
 interface ImageLightboxProps {
@@ -19,12 +20,18 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [showProps, setShowProps] = useState(false);
+  // WKWebView disables the HTML5 element-fullscreen API (that's why the native
+  // video controls show PiP but no fullscreen button), so drive the Tauri window
+  // into fullscreen ourselves and let the video fill the viewport.
+  const [videoFull, setVideoFull] = useState(false);
+  const videoFullRef = useRef(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const dragStart = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
 
   const current = images[currentIndex];
   const hasMultiple = images.length > 1;
+  const isVideo = /\.(mp4|webm|mov|m4v|mkv)$/i.test(current?.file_name ?? "");
   const sizeLabel = current?.byte_size
     ? current.byte_size < 1024 * 1024
       ? `${Math.round(current.byte_size / 1024)} KB`
@@ -39,10 +46,21 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
     setIsDragging(false);
   }, [currentIndex]);
 
+  const setWindowFullscreen = async (on: boolean) => {
+    setVideoFull(on);
+    videoFullRef.current = on;
+    try { await getCurrentWindow().setFullscreen(on); } catch { /* not fatal */ }
+  };
+
+  // Never leave the window stuck in fullscreen when the lightbox unmounts.
+  useEffect(() => () => {
+    if (videoFullRef.current) getCurrentWindow().setFullscreen(false).catch(() => {});
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "Escape") { if (videoFullRef.current) { void setWindowFullscreen(false); } else { onClose(); } return; }
       if (e.key === "ArrowLeft") setCurrentIndex(i => (i - 1 + images.length) % images.length);
       if (e.key === "ArrowRight") setCurrentIndex(i => (i + 1) % images.length);
       if (e.key === "+" || e.key === "=") setZoom(z => Math.min(4, Math.round(z * 1.25 * 100) / 100));
@@ -132,6 +150,18 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
         )}
 
         <div className="flex items-center gap-1">
+          {isVideo ? (
+            /* Video: element-fullscreen is unavailable in this webview, so this
+               toggles the app window into fullscreen and fills it. */
+            <button
+              className="bg-black/40 hover:bg-black/60 rounded-full w-7 h-7 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+              title={videoFull ? t.lightbox.exitFullscreen : t.lightbox.fullscreen}
+              onClick={() => void setWindowFullscreen(!videoFull)}
+            >
+              {videoFull ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            </button>
+          ) : (
+          <>
           {/* Zoom Out */}
           <button
             className="bg-black/40 hover:bg-black/60 rounded-full w-7 h-7 flex items-center justify-center text-white/70 hover:text-white transition-colors"
@@ -168,6 +198,9 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
+          )}
+
+          </>
           )}
 
           <div className="w-px h-4 bg-white/20 mx-1" />
@@ -224,7 +257,20 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
         </button>
       )}
 
-      {/* Image — pan with drag when zoomed in */}
+      {/* Video plays inline with native controls (no zoom/pan). */}
+      {/\.(mp4|webm|mov|m4v|mkv)$/i.test(current.file_name) ? (
+      <video
+        key={currentIndex}
+        src={getUrl(current)}
+        controls
+        autoPlay
+        playsInline
+        className={videoFull ? "w-screen h-screen bg-black" : "max-w-[90vw] max-h-[85vh] rounded shadow-2xl bg-black"}
+        onClick={e => e.stopPropagation()}
+        onDoubleClick={() => void setWindowFullscreen(!videoFull)}
+      />
+      ) : (
+      /* Image — pan with drag when zoomed in */
       <img
         key={currentIndex}
         src={getUrl(current)}
@@ -246,6 +292,7 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
         onMouseDown={handleImageMouseDown}
         onClick={e => e.stopPropagation()}
       />
+      )}
 
       {/* Next arrow */}
       {hasMultiple && (

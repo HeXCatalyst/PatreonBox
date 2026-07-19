@@ -124,6 +124,8 @@ export interface Translations {
     downloadedAt: (date: string) => string;
     saveToDownloads: string;
     close: string;
+    fullscreen: string;
+    exitFullscreen: string;
   };
   comments: {
     heading: (n: number) => string;
@@ -173,6 +175,7 @@ export interface Translations {
     wheelDone: string;
     favorite: string;
     unfavorite: string;
+    kindName: (k: string) => string;
     scrollToTop: string;
     scrollToBottom: string;
     loading: string;
@@ -501,6 +504,8 @@ const zh: Translations = {
     downloadedAt: (date) => `下载于 ${date}`,
     saveToDownloads: '保存到下载',
     close: '关闭 (Esc)',
+    fullscreen: '全屏',
+    exitFullscreen: '退出全屏 (Esc)',
   },
   comments: {
     heading: (n) => `评论 (${n})`,
@@ -550,6 +555,7 @@ const zh: Translations = {
     wheelDone: '完成',
     favorite: '收藏',
     unfavorite: '取消收藏',
+    kindName: (k) => ({ all: '全部', image: '图片', video: '视频', audio: '音频' }[k] ?? k),
     scrollToTop: '回到顶端',
     scrollToBottom: '跳到底端',
     loading: '加载中…',
@@ -878,6 +884,8 @@ const en: Translations = {
     downloadedAt: (date) => `Downloaded at ${date}`,
     saveToDownloads: 'Save to Downloads',
     close: 'Close (Esc)',
+    fullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit fullscreen (Esc)',
   },
   comments: {
     heading: (n) => `Comments (${n})`,
@@ -927,6 +935,7 @@ const en: Translations = {
     wheelDone: 'Done',
     favorite: 'Favorite',
     unfavorite: 'Remove from favorites',
+    kindName: (k) => ({ all: 'All', image: 'Images', video: 'Video', audio: 'Audio' }[k] ?? k),
     scrollToTop: 'Back to top',
     scrollToBottom: 'Jump to bottom',
     loading: 'Loading…',

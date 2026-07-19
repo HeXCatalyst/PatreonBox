@@ -179,15 +179,28 @@ export async function getAllPostsChrono(limit = 300): Promise<Post[]> {
 }
 
 const MEDIA_IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
+const MEDIA_VIDEO_RE = /\.(mp4|webm|mov|m4v|mkv)$/i;
+const MEDIA_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac)$/i;
+
+export type MediaKind = 'image' | 'video' | 'audio';
+
+/** Classify an asset by filename extension (mimetypes are unreliable upstream). */
+export function mediaKindOf(fileName: string): MediaKind | null {
+  if (MEDIA_IMAGE_RE.test(fileName)) return 'image';
+  if (MEDIA_VIDEO_RE.test(fileName)) return 'video';
+  if (MEDIA_AUDIO_RE.test(fileName)) return 'audio';
+  return null;
+}
 
 /**
- * All downloaded image assets for a creator, across every post, ordered by the
- * source post's date. Powers the per-creator Media view (X.com-style image wall).
- * Images are identified by filename extension to match the per-post gallery.
+ * All downloaded media assets (images, videos, audio) for a creator, across
+ * every post, ordered by the source post's date. Powers the per-creator Media
+ * view. `kinds` narrows the result (default: everything renderable).
  */
 export async function getCreatorMedia(
   creatorId: string,
   order: 'desc' | 'asc' = 'desc',
+  kinds: MediaKind[] = ['image', 'video', 'audio'],
 ): Promise<Asset[]> {
   const db = await getDb();
   const dir = order === 'asc' ? 'ASC' : 'DESC';
@@ -199,7 +212,8 @@ export async function getCreatorMedia(
      ORDER BY COALESCE(p.published_at, p.created_at) ${dir}, a.created_at ASC`,
     [creatorId],
   );
-  return rows.filter(a => MEDIA_IMAGE_RE.test(a.file_name));
+  const want = new Set(kinds);
+  return rows.filter(a => { const k = mediaKindOf(a.file_name); return k !== null && want.has(k); });
 }
 
 /** Cached comments for a post, oldest first (replies resolved by parent_id). */
