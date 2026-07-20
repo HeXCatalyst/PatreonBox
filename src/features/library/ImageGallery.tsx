@@ -1,8 +1,8 @@
 import { Asset } from "../../types/db";
 import { Image as ImageIcon, Download } from "lucide-react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "../../lib/i18n";
+import { assetUrl, useImagesDir } from "../../lib/assetUrl";
 
 const STORAGE_KEY = "patreonbox-gallery-rowh";
 const DEFAULT_ROW_H = 220;
@@ -12,7 +12,6 @@ const PAD = 12;  // container padding (p-3)
 interface ImageGalleryProps {
   assets: Asset[];           // image assets only
   downloadedImages: Asset[]; // assets with downloaded_at !== null, for lightbox index lookup
-  imagesDir: string;
   totalCount: number;
   onOpenLightbox: (index: number) => void;
   onSave: (localPath: string) => void;
@@ -25,8 +24,9 @@ interface ImageGalleryProps {
  * Aspect ratios are measured on load (galleries are small); the slider tunes the
  * target row height (density).
  */
-export function ImageGallery({ assets, downloadedImages, imagesDir, totalCount, onOpenLightbox, onSave }: ImageGalleryProps) {
+export function ImageGallery({ assets, downloadedImages, totalCount, onOpenLightbox, onSave }: ImageGalleryProps) {
   const t = useTranslation();
+  const imagesDir = useImagesDir();
   const [rowH, setRowH] = useState<number>(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     const n = stored ? parseInt(stored, 10) : DEFAULT_ROW_H;
@@ -46,13 +46,7 @@ export function ImageGallery({ assets, downloadedImages, imagesDir, totalCount, 
     return () => ro.disconnect();
   }, []);
 
-  const getAssetUrl = useCallback((asset: Asset) => {
-    if (!imagesDir) return "";
-    const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
-    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
-    // full-res replacement at the same path) isn't served from WebKit's cache.
-    return asset.downloaded_at ? `${base}?v=${encodeURIComponent(asset.downloaded_at)}` : base;
-  }, [imagesDir]);
+  const getAssetUrl = useCallback((asset: Asset) => assetUrl(imagesDir, asset), [imagesDir]);
 
   const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -120,7 +114,7 @@ export function ImageGallery({ assets, downloadedImages, imagesDir, totalCount, 
                   return (
                     <div key={asset.id} className="relative group flex-shrink-0 overflow-hidden rounded" style={{ width: w, height: h }}>
                       <img
-                        src={getAssetUrl(asset)}
+                        src={getAssetUrl(asset) ?? undefined}
                         alt={asset.file_name}
                         className="w-full h-full object-cover cursor-pointer"
                         decoding="async"

@@ -1,10 +1,11 @@
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Star, Image as ImageIcon, FileText, ArrowDownWideNarrow, ArrowUpWideNarrow } from "lucide-react";
 import { FavoriteAsset, Post } from "../../types/db";
 import { getFavoriteMedia, getPosts, toggleFavoriteAsset, type FavoriteSort } from "../../lib/db";
 import { ImageLightbox } from "../library/ImageLightbox";
 import { useTranslation } from "../../lib/i18n";
+import { assetUrl, useImagesDir } from "../../lib/assetUrl";
+import { ToolbarButton } from "@/components/ui/toolbar-button";
 import { useSettings } from "../settings/SettingsContext";
 
 interface FavoritesViewProps {
@@ -25,14 +26,13 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
   const [tab, setTab] = useState<"media" | "posts">("media");
   const [media, setMedia] = useState<FavoriteAsset[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
-  const [imagesDir, setImagesDir] = useState("");
+  const imagesDir = useImagesDir();
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [sort, setSort] = useState<FavoriteSort>("favorited");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error); }, []);
 
   const loadMedia = useCallback(async () => {
     setLoading(true);
@@ -55,11 +55,7 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [media]);
 
-  const urlFor = (a: FavoriteAsset) => {
-    if (!imagesDir) return "";
-    const base = convertFileSrc(`${imagesDir}/${a.local_path.replace(/^images\//, "")}`);
-    return a.downloaded_at ? `${base}?v=${encodeURIComponent(a.downloaded_at)}` : base;
-  };
+  const urlFor = (a: FavoriteAsset) => assetUrl(imagesDir, a);
 
   const unfavorite = async (a: FavoriteAsset) => {
     setMedia(prev => prev.filter(m => m.id !== a.id));   // drop it from this view
@@ -121,14 +117,13 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
               {SORTS.map(s => <option key={s} value={s}>{t.favorites.sortName(s)}</option>)}
             </select>
 
-            <button
+            <ToolbarButton
               onClick={() => setDir(d => (d === "desc" ? "asc" : "desc"))}
-              className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
               title={dir === "desc" ? t.favorites.desc : t.favorites.asc}
             >
               {dir === "desc" ? <ArrowDownWideNarrow className="h-3.5 w-3.5" /> : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
               {dir === "desc" ? t.favorites.desc : t.favorites.asc}
-            </button>
+            </ToolbarButton>
           </div>
         )}
       </div>
@@ -144,7 +139,7 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
               {media.map((a, i) => (
                 <div key={a.id} className="relative group rounded overflow-hidden bg-muted/20" style={{ aspectRatio: "1" }}>
                   <img
-                    src={urlFor(a)}
+                    src={urlFor(a) ?? undefined}
                     alt={a.file_name}
                     className="w-full h-full object-cover cursor-pointer"
                     decoding="async"
@@ -196,7 +191,6 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
         <ImageLightbox
           images={media}
           initialIndex={lightboxIndex}
-          imagesDir={imagesDir}
           onClose={() => setLightboxIndex(null)}
         />
       )}

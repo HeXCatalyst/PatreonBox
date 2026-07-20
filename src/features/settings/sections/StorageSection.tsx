@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "../../../lib/i18n";
+import { invalidateImagesDir, useImagesDir } from '../../../lib/assetUrl';
 import { useSettings } from "../SettingsContext";
 
 interface StorageUsage {
@@ -44,7 +45,7 @@ export function StorageSection() {
   const [cleared, setCleared] = useState(false);
   const [finderError, setFinderError] = useState<string | null>(null);
   const { settings, updateSettings, refreshSettings } = useSettings();
-  const [imagesDir, setImagesDir] = useState<string>('');
+  const imagesDir = useImagesDir();
   const [migrating, setMigrating] = useState(false);
   const migratingRef = useRef(false);
   const [migrationPhase, setMigrationPhase] = useState<'copying' | 'verifying' | 'done'>('copying');
@@ -55,7 +56,6 @@ export function StorageSection() {
   useEffect(() => {
     invoke<string>('resolve_app_data_dir').then(setDataDir).catch(console.error);
     invoke<StorageUsage>('get_storage_usage').then(setUsage).catch(console.error);
-    invoke<string>('resolve_images_dir').then(setImagesDir).catch(console.error);
   }, [cleared, migrating]);
 
   useEffect(() => {
@@ -99,6 +99,9 @@ export function StorageSection() {
     try {
       await invoke('migrate_images_dir', { targetDir });
       await refreshSettings();
+      // The image store just moved, so every cached asset URL now points at the
+      // old location. Re-resolve and push the new root to any mounted view.
+      invalidateImagesDir();
       setCleared(c => !c); // reuse existing effect dependency to force a re-fetch of dataDir/usage/imagesDir
     } catch (e) {
       setMigrationError(String(e));

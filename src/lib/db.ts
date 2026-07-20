@@ -1,5 +1,9 @@
 import Database from '@tauri-apps/plugin-sql';
 import { Creator, Post, Asset, Comment, FavoriteAsset } from '../types/db';
+import { mediaKindOf, ALL_MEDIA_KINDS, type MediaKind } from './media';
+
+// Re-exported so existing importers keep working; the definitions live in ./media.
+export { mediaKindOf, type MediaKind };
 
 let dbInstance: Database | null = null;
 
@@ -175,27 +179,6 @@ export async function getAllPostsChrono(limit = 300): Promise<Post[]> {
   );
 }
 
-// ⚠️ Keep these three lists in sync with `derive_media_type` in
-// src-tauri/src/commands/scraping.rs. They are the same classification applied
-// at two different times — Rust decides `assets.media_type` at scrape time, this
-// decides what the media wall renders. When they disagree, assets go missing
-// silently rather than erroring: `.avi` used to be listed only on the Rust side,
-// so those files were stored as media_type='video' but classified null here and
-// never appeared in the wall or the kind filter.
-const MEDIA_IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
-const MEDIA_VIDEO_RE = /\.(mp4|webm|mov|m4v|mkv|avi)$/i;
-const MEDIA_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac)$/i;
-
-export type MediaKind = 'image' | 'video' | 'audio';
-
-/** Classify an asset by filename extension (mimetypes are unreliable upstream). */
-export function mediaKindOf(fileName: string): MediaKind | null {
-  if (MEDIA_IMAGE_RE.test(fileName)) return 'image';
-  if (MEDIA_VIDEO_RE.test(fileName)) return 'video';
-  if (MEDIA_AUDIO_RE.test(fileName)) return 'audio';
-  return null;
-}
-
 /**
  * All downloaded media assets (images, videos, audio) for a creator, across
  * every post, ordered by the source post's date. Powers the per-creator Media
@@ -204,7 +187,7 @@ export function mediaKindOf(fileName: string): MediaKind | null {
 export async function getCreatorMedia(
   creatorId: string,
   order: 'desc' | 'asc' = 'desc',
-  kinds: MediaKind[] = ['image', 'video', 'audio'],
+  kinds: MediaKind[] = ALL_MEDIA_KINDS,
 ): Promise<Asset[]> {
   if (kinds.length === 0) return []; // `IN ()` isn't valid SQL, and no kinds means no results anyway
   const db = await getDb();

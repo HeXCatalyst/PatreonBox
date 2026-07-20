@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Maximize2, RefreshCw, ImageDown, FileText, Image as ImageIcon } from "lucide-react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Creator, Post, Asset } from "../../types/db";
+import { assetUrl, useImagesDir } from "../../lib/assetUrl";
+import { isImageFile } from "../../lib/media";
 import { getCreatorMedia } from "../../lib/db";
 import { ReadingView } from "../library/ReadingView";
 import { MediaView } from "../library/MediaView";
@@ -55,7 +56,6 @@ interface WorkbenchViewProps {
   demoMode: boolean;
 }
 
-const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
 
 /**
  * The Workbench layout: a slim creator rail, a big reading canvas (the existing
@@ -76,7 +76,7 @@ export function WorkbenchView({
   mediaOrder, onMediaOrderChange, demoMode,
 }: WorkbenchViewProps) {
   const t = useTranslation();
-  const [imagesDir, setImagesDir] = useState("");
+  const imagesDir = useImagesDir();
   const [media, setMedia] = useState<Asset[]>([]);
   const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
   const [mode, setMode] = useState<'posts' | 'media'>('posts');
@@ -98,10 +98,6 @@ export function WorkbenchView({
   // on the Posts view.
   const selectCreator = (id: string) => { setHome('workbench'); setMode('posts'); onSelectCreator(id); };
 
-  useEffect(() => {
-    invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
-  }, []);
-
   // Downloaded images for the current creator → first image per post = its thumb.
   useEffect(() => {
     if (!selectedCreatorId) { setMedia([]); return; }
@@ -116,16 +112,15 @@ export function WorkbenchView({
     const map = new Map<string, Asset>();
     for (const a of media) {
       if (!a.post_id || map.has(a.post_id)) continue;
-      if (a.local_path && IMAGE_RE.test(a.local_path)) map.set(a.post_id, a);
+      if (a.local_path && isImageFile(a.local_path)) map.set(a.post_id, a);
     }
     return map;
   }, [media]);
 
   const thumbFor = (post: Post): string | null => {
     const a = thumbByPost.get(post.id);
-    if (!a || !imagesDir) return null;
-    const base = convertFileSrc(`${imagesDir}/${a.local_path.replace(/^images\//, "")}`);
-    return a.downloaded_at ? `${base}?v=${encodeURIComponent(a.downloaded_at)}` : base;
+    if (!a) return null;
+    return assetUrl(imagesDir, a);
   };
 
   // Auto-open the newest post when a creator is selected but nothing's open yet

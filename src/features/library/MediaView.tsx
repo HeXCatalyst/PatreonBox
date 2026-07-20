@@ -1,17 +1,19 @@
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check, CalendarClock, Star, Play, Music } from "lucide-react";
 import { Asset } from "../../types/db";
-import { getCreatorMedia, toggleFavoriteAsset, mediaKindOf, type MediaKind } from "../../lib/db";
+import { getCreatorMedia, toggleFavoriteAsset } from "../../lib/db";
+import { mediaKindOf, isImageFile, ALL_MEDIA_KINDS, type MediaKind } from "../../lib/media";
 import { getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import { ImageLightbox } from "./ImageLightbox";
 import { MediaTimeScrubber } from "./MediaTimeScrubber";
 import { useTranslation } from "../../lib/i18n";
+import { assetUrl, useImagesDir } from "../../lib/assetUrl";
 import { Button } from "@/components/ui/button";
+import { ToolbarButton } from "@/components/ui/toolbar-button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
-const IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
 const SIZE_KEY = "patreonbox-media-size";
 const DEFAULT_SIZE = 140;
 const GAP = 4;      // grid gap in px
@@ -42,14 +44,14 @@ function loadDemoMedia(creatorId: string, order: Order): Asset[] {
   });
   return posts
     .flatMap(p => getDemoAssets(p.id)
-      .filter(a => a.downloaded_at !== null && IMAGE_RE.test(a.file_name))
+      .filter(a => a.downloaded_at !== null && isImageFile(a.file_name))
       .map(a => ({ ...a, published_at: p.published_at })));
 }
 
 export function MediaView({ creatorId, creatorName, order, onOrderChange, onShowPosts, demoMode, embedded, controlsSlot }: MediaViewProps) {
   const t = useTranslation();
+  const imagesDir = useImagesDir();
   const [media, setMedia] = useState<Asset[]>([]);
-  const [imagesDir, setImagesDir] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [selectMode, setSelectMode] = useState(false);
@@ -82,15 +84,11 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const loadedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     const load = async () => {
       try {
-        const kinds: MediaKind[] = kindFilter === 'all' ? ['image', 'video', 'audio'] : [kindFilter];
+        const kinds: MediaKind[] = kindFilter === 'all' ? ALL_MEDIA_KINDS : [kindFilter];
         const items = demoMode ? loadDemoMedia(creatorId, order) : await getCreatorMedia(creatorId, order, kinds);
         if (!cancelled) setMedia(items);
       } catch (e) {
@@ -203,13 +201,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     if (fastTimerRef.current != null) window.clearTimeout(fastTimerRef.current);
   }, []);
 
-  const getUrl = useCallback((asset: Asset) => {
-    if (!imagesDir) return "";
-    const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
-    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
-    // full-res replacement at the same path) isn't served from WebKit's cache.
-    return asset.downloaded_at ? `${base}?v=${encodeURIComponent(asset.downloaded_at)}` : base;
-  }, [imagesDir]);
+  const getUrl = useCallback((asset: Asset) => assetUrl(imagesDir, asset), [imagesDir]);
 
   const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -239,21 +231,18 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const rightControls = selectMode ? (
     <div className="flex items-center gap-2 flex-shrink-0">
       <span className="text-xs text-muted-foreground tabular-nums">{t.mediaView.selectedCount(selected.size)}</span>
-      <button
+      <ToolbarButton
         onClick={() => setConfirmOpen(true)}
         disabled={selected.size === 0}
-        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-destructive border-destructive/50 hover:bg-destructive/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        tone="danger"
       >
         <Trash2 className="h-3.5 w-3.5" />
         {t.mediaView.deleteSelected}
-      </button>
-      <button
-        onClick={exitSelect}
-        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-      >
+      </ToolbarButton>
+      <ToolbarButton onClick={exitSelect}>
         <X className="h-3.5 w-3.5" />
         {t.mediaView.cancel}
-      </button>
+      </ToolbarButton>
     </div>
   ) : (
     <div className="flex items-center gap-3 flex-shrink-0">
@@ -268,31 +257,23 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
           </button>
         ))}
       </div>
-      <button
-        onClick={() => setWheelOpen(true)}
-        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-        title={t.mediaView.jumpToMonth}
-      >
+      <ToolbarButton onClick={() => setWheelOpen(true)} title={t.mediaView.jumpToMonth}>
         <CalendarClock className="h-3.5 w-3.5" />
         {t.mediaView.jumpToMonth}
-      </button>
-      <button
-        onClick={() => setSelectMode(true)}
-        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-      >
+      </ToolbarButton>
+      <ToolbarButton onClick={() => setSelectMode(true)}>
         <CheckSquare className="h-3.5 w-3.5" />
         {t.mediaView.select}
-      </button>
-      <button
+      </ToolbarButton>
+      <ToolbarButton
         onClick={() => onOrderChange(order === "desc" ? "asc" : "desc")}
-        className="h-7 px-2.5 flex items-center gap-1.5 border rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
         title={order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
       >
         {order === "desc"
           ? <ArrowDownWideNarrow className="h-3.5 w-3.5" />
           : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
         {order === "desc" ? t.mediaView.newestFirst : t.mediaView.oldestFirst}
-      </button>
+      </ToolbarButton>
       <div className="flex items-center gap-1.5">
         <span className="text-xs text-muted-foreground">{t.imageGallery.small}</span>
         <input
@@ -374,6 +355,12 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                     onMouseEnter={selectMode ? () => { if (paintRef.current.active) applyPaint(asset.id); } : undefined}
                   >
                     {(() => {
+                      const url = getUrl(asset);
+                      // The images dir resolves a tick after first paint. Render
+                      // the same placeholder the fling path uses rather than an
+                      // empty src, which the webview would resolve against the
+                      // page URL and request in a loop across every visible cell.
+                      if (url === null) return <div className="w-full h-full rounded bg-muted/40" />;
                       const kind = mediaKindOf(asset.file_name);
                       if (kind === "video") {
                         // Poster frame via <video preload="metadata"> (first frame),
@@ -382,7 +369,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                           <div className={`relative w-full h-full rounded overflow-hidden cursor-pointer bg-black ${isSelected ? "opacity-70" : ""}`}
                             onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}>
                             <video
-                              src={`${getUrl(asset)}#t=0.1`}
+                              src={`${url}#t=0.1`}
                               preload="metadata"
                               muted
                               playsInline
@@ -413,7 +400,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                         <div className="w-full h-full rounded bg-muted/40" />
                       ) : (
                         <img
-                          src={getUrl(asset)}
+                          src={url}
                           alt={asset.file_name}
                           className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
                           decoding="async"
@@ -472,7 +459,6 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
         <ImageLightbox
           images={media}
           initialIndex={lightboxIndex}
-          imagesDir={imagesDir}
           onClose={() => setLightboxIndex(null)}
         />
       )}

@@ -1,20 +1,22 @@
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { Asset } from "../../types/db";
 import { Download, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Info, RotateCcw, Maximize2, Minimize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "../../lib/i18n";
+import { assetUrl, useImagesDir } from "../../lib/assetUrl";
+import { isVideoFile } from "../../lib/media";
 
 interface ImageLightboxProps {
   images: Asset[];       // downloaded image assets for the current post
   initialIndex: number;  // index of the image that was clicked
-  imagesDir: string;    // used to build the local file URL
   onClose: () => void;
   onSaveSuccess?: () => void;
 }
 
-export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSaveSuccess }: ImageLightboxProps) {
+export function ImageLightbox({ images, initialIndex, onClose, onSaveSuccess }: ImageLightboxProps) {
   const t = useTranslation();
+  const imagesDir = useImagesDir();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -31,7 +33,7 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
 
   const current = images[currentIndex];
   const hasMultiple = images.length > 1;
-  const isVideo = /\.(mp4|webm|mov|m4v|mkv)$/i.test(current?.file_name ?? "");
+  const isVideo = isVideoFile(current?.file_name ?? "");
   const sizeLabel = current?.byte_size
     ? current.byte_size < 1024 * 1024
       ? `${Math.round(current.byte_size / 1024)} KB`
@@ -97,12 +99,7 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
     if (images.length > 0 && currentIndex > images.length - 1) setCurrentIndex(images.length - 1);
   }, [images.length, currentIndex]);
 
-  const getUrl = (asset: Asset) => {
-    const base = convertFileSrc(`${imagesDir}/${asset.local_path.replace(/^images\//, "")}`);
-    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
-    // full-res replacement at the same path) isn't served from WebKit's cache.
-    return asset.downloaded_at ? `${base}?v=${encodeURIComponent(asset.downloaded_at)}` : base;
-  };
+  const getUrl = (asset: Asset) => assetUrl(imagesDir, asset) ?? undefined;
 
   const handleOverlayMouseMove = (e: React.MouseEvent) => {
     if (!isDragging) return;
@@ -258,7 +255,7 @@ export function ImageLightbox({ images, initialIndex, imagesDir, onClose, onSave
       )}
 
       {/* Video plays inline with native controls (no zoom/pan). */}
-      {/\.(mp4|webm|mov|m4v|mkv)$/i.test(current.file_name) ? (
+      {isVideo ? (
       <video
         key={currentIndex}
         src={getUrl(current)}

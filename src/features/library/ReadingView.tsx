@@ -3,12 +3,14 @@ import { formatPostDate } from "../../lib/formatDate";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar, ExternalLink, Image as ImageIcon, Star } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { useCallback, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { ImageLightbox } from "./ImageLightbox";
 import { PostComments } from "./PostComments";
 import { ImageGallery } from "./ImageGallery";
 import { useTranslation } from "../../lib/i18n";
+import { buildAssetUrl, useImagesDir } from "../../lib/assetUrl";
+import { mediaKindOfAsset } from "../../lib/media";
 
 interface ReadingViewProps {
   post: Post | null;
@@ -18,7 +20,7 @@ interface ReadingViewProps {
 
 export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   const t = useTranslation();
-  const [imagesDir, setImagesDir] = useState<string>("");
+  const imagesDir = useImagesDir();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -31,16 +33,8 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
     toastTimer.current = setTimeout(() => setToast(null), 2000);
   }, []);
 
-  useEffect(() => {
-    invoke<string>("resolve_images_dir").then(setImagesDir).catch(console.error);
-  }, []);
-
-  const assetUrl = (path: string, version?: string | null) => {
-    const base = convertFileSrc(`${imagesDir}/${path.replace(/^images\//, "")}`);
-    // Cache-bust by download time so a re-downloaded file (e.g. a de-blurred
-    // full-res replacement at the same path) isn't served from WebKit's cache.
-    return version ? `${base}?v=${encodeURIComponent(version)}` : base;
-  };
+  const assetUrl = (path: string, version?: string | null) =>
+    (imagesDir ? buildAssetUrl(imagesDir, path, version) : undefined);
 
   if (!post) {
     return (
@@ -55,10 +49,6 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
       </div>
     );
   }
-
-  const isImage = (filename: string) => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(filename);
-  // Classify by extension — Patreon sometimes mis-declares a video's mimetype.
-  const isVideo = (filename: string) => /\.(mp4|webm|mov|m4v|mkv)$/i.test(filename);
 
   const formatSize = (bytes: number | null) => {
     if (!bytes) return null;
@@ -76,10 +66,15 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   };
 
   const safeDateString = formatPostDate(post.published_at, t.common.unknownDate);
-  const videoAssets  = assets.filter(a => isVideo(a.file_name));
-  const imageAssets  = assets.filter(a => isImage(a.file_name));
-  const audioAssets  = assets.filter(a => (a.mime_type?.startsWith("audio/") ?? false) && !isVideo(a.file_name));
-  const fileAssets   = assets.filter(a => !isImage(a.file_name) && !isVideo(a.file_name) && !(a.mime_type?.startsWith("audio/") ?? false));
+  // One classification pass into four mutually exclusive buckets. Extension
+  // wins, with the reported mimetype as fallback — so a file whose extension we
+  // don't recognise but which declares audio/* still lands under audio rather
+  // than "other files", as it did when this was four separate predicates.
+  const kinds = new Map(assets.map(a => [a.id, mediaKindOfAsset(a)]));
+  const videoAssets = assets.filter(a => kinds.get(a.id) === 'video');
+  const imageAssets = assets.filter(a => kinds.get(a.id) === 'image');
+  const audioAssets = assets.filter(a => kinds.get(a.id) === 'audio');
+  const fileAssets  = assets.filter(a => kinds.get(a.id) == null);
   // Carry the post's publish time onto each image so the lightbox can show when
   // the creator originally posted it (not just when we downloaded the file).
   const downloadedImages = imageAssets
@@ -150,7 +145,6 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
                 <ImageGallery
                   assets={imageAssets}
                   downloadedImages={downloadedImages}
-                  imagesDir={imagesDir}
                   totalCount={imageAssets.length}
                   onOpenLightbox={setLightboxIndex}
                   onSave={async (localPath) => {
@@ -307,7 +301,6 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
         <ImageLightbox
           images={downloadedImages}
           initialIndex={lightboxIndex}
-          imagesDir={imagesDir}
           onClose={handleLightboxClose}
           onSaveSuccess={() => showToast(t.readingView.savedToDownloads)}
         />
