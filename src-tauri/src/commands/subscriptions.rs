@@ -300,25 +300,6 @@ pub async fn report_scraped_subscriptions(app: AppHandle, creators: Vec<ScrapedC
     Ok(())
 }
 
-/// Frontend calls this to retrieve the scraped data (polling approach)
-#[tauri::command]
-pub async fn get_scraped_subscriptions(app: AppHandle) -> Result<Option<Vec<ScrapedCreatorData>>, String> {
-    let state = app.state::<ScrapedSubscriptionsState>();
-    let mut data = state.0.lock().map_err(|e| e.to_string())?;
-    // Take the data out (returns None on subsequent calls until new scrape)
-    Ok(data.take())
-}
-
-#[tauri::command]
-pub async fn read_scraped_file(app: AppHandle) -> Result<String, String> {
-    eprintln!("DEBUG: read_scraped_file called");
-    let scraped_path = app.path().app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("patreon_scraped.json");
-    std::fs::read_to_string(&scraped_path)
-        .map_err(|e| format!("Failed to read scraped file: {}", e))
-}
-
 /// Normalize a Patreon creator URL to a canonical plain-slug form so /slug,
 /// /c/slug, /cw/slug and case/trailing-slash variants all map to one value.
 /// `/c/` and `/cw/` are routing prefixes — the slug is the next segment.

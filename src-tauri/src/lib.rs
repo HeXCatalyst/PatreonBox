@@ -134,6 +134,30 @@ pub fn run() {
                   CREATE INDEX IF NOT EXISTS idx_assets_favorited ON assets(favorited_at);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // 'transient' (network blip, 5xx — worth retrying) vs 'permanent'
+            // (401/403/404/410 — an expired signed CDN link or a deleted file,
+            // which will fail identically no matter how often we retry).
+            // start_downloads clears only the transient ones, so a creator with
+            // hundreds of expired links no longer re-queues them on every click.
+            // Existing rows stay NULL and are treated as transient, preserving
+            // today's retry-everything behaviour for already-recorded failures.
+            version: 10,
+            description: "add_download_error_kind_to_assets",
+            sql: "ALTER TABLE assets ADD COLUMN download_error_kind TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            // Every per-creator query (post list, media wall, post counts,
+            // retry-all) filters or groups by posts.creator_id; without this the
+            // COUNT(*) in getCreators() alone scans the whole posts table on
+            // every refresh, and it refreshes on each sync/delete/clear.
+            version: 11,
+            description: "add_posts_creator_index",
+            sql: "CREATE INDEX IF NOT EXISTS idx_posts_creator ON posts(creator_id);
+                  CREATE INDEX IF NOT EXISTS idx_assets_post ON assets(post_id);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -186,6 +210,7 @@ pub fn run() {
         })
         .manage(commands::ScrapedSubscriptionsState(std::sync::Mutex::new(None)))
         .manage(commands::ScrapedPostsRawState(std::sync::Mutex::new(None)))
+        .manage(commands::ScrapeProgressTick(std::sync::atomic::AtomicU64::new(0)))
         .manage(commands::comments::PostCommentsRawState(std::sync::Mutex::new(None)))
         .manage(commands::perf::SysState(std::sync::Mutex::new(sysinfo::System::new())))
         .manage(commands::ImageDownloadCancelFlag(
@@ -202,10 +227,6 @@ pub fn run() {
             commands::file_ops::resolve_app_data_dir,
             commands::file_ops::resolve_images_dir,
             commands::file_ops::ensure_demo_assets_on_disk,
-            commands::file_ops::create_asset_dir,
-            commands::file_ops::get_file_checksum,
-            commands::file_ops::read_file_metadata,
-            commands::file_ops::copy_imported_file,
             commands::file_ops::save_asset_to_downloads,
             commands::file_ops::open_asset_in_system,
             commands::file_ops::delete_downloaded_assets,
@@ -218,15 +239,12 @@ pub fn run() {
             commands::scraping::report_scraped_posts_progress,
             commands::scraping::report_scraped_post_page,
             commands::scraping::report_scraped_posts_raw,
-            commands::scraping::download_creator_images,
             commands::scraping::get_sync_checkpoint,
             commands::scraping::clear_sync_checkpoint,
             commands::scraping::cancel_image_download,
             commands::scraping::close_post_sync_window,
             commands::subscriptions::scrape_subscriptions,
             commands::subscriptions::report_scraped_subscriptions,
-            commands::subscriptions::get_scraped_subscriptions,
-            commands::subscriptions::read_scraped_file,
             commands::subscriptions::save_scraped_to_db,
             commands::subscriptions::set_creator_pinned,
             commands::subscriptions::reorder_pinned_creators,

@@ -7,31 +7,13 @@ export async function getDb(): Promise<Database> {
   if (!dbInstance) {
     dbInstance = await Database.load('sqlite:patreonbox.db');
     await dbInstance.execute("PRAGMA foreign_keys = ON").catch(() => {});
-    await dbInstance.execute(
-      "ALTER TABLE posts ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0"
-    ).catch((e: unknown) => {
-      if (!String(e).includes('duplicate column')) throw e;
-    });
 
-    await dbInstance.execute(
-      "ALTER TABLE posts ADD COLUMN min_cents_pledged_to_view INTEGER"
-    ).catch((e: unknown) => {
-      if (!String(e).includes('duplicate column')) throw e;
-    });
-
-    // Per-image favourite timestamp (belt-and-suspenders alongside migration v9).
-    await dbInstance.execute(
-      "ALTER TABLE assets ADD COLUMN favorited_at TEXT"
-    ).catch((e: unknown) => {
-      if (!String(e).includes('duplicate column')) throw e;
-    });
-
-    // Download failure reason (belt-and-suspenders alongside migration v7).
-    await dbInstance.execute(
-      "ALTER TABLE assets ADD COLUMN download_error TEXT"
-    ).catch((e: unknown) => {
-      if (!String(e).includes('duplicate column')) throw e;
-    });
+    // NOTE: schema changes belong in the versioned migrations in
+    // src-tauri/src/lib.rs — never here. A duplicate set of ALTER TABLEs used to
+    // live at this spot as a "belt and suspenders" guard, but it made the schema
+    // have two sources of truth and, worse, swallowed real failures behind a
+    // brittle `includes('duplicate column')` string check. If a column is
+    // missing, the migration is what's broken, and it should fail loudly.
 
     // Self-healing cleanup: merge creator rows that point at the same Patreon
     // creator. Patreon exposes one creator under several URL forms — /slug,
@@ -93,6 +75,16 @@ export async function getCreators(): Promise<(Creator & { post_count: number })[
   `);
 }
 
+/**
+ * Neutralise LIKE metacharacters in a user-supplied search term so it matches
+ * literally. Pairs with an `ESCAPE '\'` clause on the LIKE itself. The
+ * backslash must be escaped first, or it would double-escape the `%`/`_` this
+ * function goes on to add.
+ */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, m => `\\${m}`);
+}
+
 export async function getPosts(
   creatorId?: string,
   search?: string,
@@ -115,9 +107,14 @@ export async function getPosts(
     binds.push(creatorId);
   }
   if (search) {
-    query += ` AND (p.title LIKE ? OR p.content_raw LIKE ?)`;
-    binds.push(`%${search}%`);
-    binds.push(`%${search}%`);
+    // Escape LIKE's own wildcards before wrapping the term in %…%. Parameter
+    // binding stops SQL injection but does nothing about `%` and `_` *inside*
+    // the bound value, where they still act as wildcards — so searching for
+    // "50%" matched anything starting "50", and a lone "_" matched every post.
+    const term = `%${escapeLike(search)}%`;
+    query += ` AND (p.title LIKE ? ESCAPE '\\' OR p.content_raw LIKE ? ESCAPE '\\')`;
+    binds.push(term);
+    binds.push(term);
   }
   if (starred) {
     query += ` AND p.is_starred = 1`;
@@ -178,8 +175,15 @@ export async function getAllPostsChrono(limit = 300): Promise<Post[]> {
   );
 }
 
+// ⚠️ Keep these three lists in sync with `derive_media_type` in
+// src-tauri/src/commands/scraping.rs. They are the same classification applied
+// at two different times — Rust decides `assets.media_type` at scrape time, this
+// decides what the media wall renders. When they disagree, assets go missing
+// silently rather than erroring: `.avi` used to be listed only on the Rust side,
+// so those files were stored as media_type='video' but classified null here and
+// never appeared in the wall or the kind filter.
 const MEDIA_IMAGE_RE = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
-const MEDIA_VIDEO_RE = /\.(mp4|webm|mov|m4v|mkv)$/i;
+const MEDIA_VIDEO_RE = /\.(mp4|webm|mov|m4v|mkv|avi)$/i;
 const MEDIA_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac)$/i;
 
 export type MediaKind = 'image' | 'video' | 'audio';
@@ -202,15 +206,26 @@ export async function getCreatorMedia(
   order: 'desc' | 'asc' = 'desc',
   kinds: MediaKind[] = ['image', 'video', 'audio'],
 ): Promise<Asset[]> {
+  if (kinds.length === 0) return []; // `IN ()` isn't valid SQL, and no kinds means no results anyway
   const db = await getDb();
   const dir = order === 'asc' ? 'ASC' : 'DESC';
+  // Pre-filter on the stored media_type so PDFs, archives and unselected kinds
+  // never cross the IPC boundary — switching the kind filter used to pull every
+  // downloaded asset the creator has and discard most of it in JS.
+  //
+  // `media_type IS NULL` has to pass through: rows written before that column
+  // existed have no value, and dropping them would make old assets vanish from
+  // the wall. The mediaKindOf pass below is what resolves those, and it also
+  // keeps the filename extension as the final authority for everything else.
+  const kindPlaceholders = kinds.map(() => '?').join(', ');
   const rows = await db.select<Asset[]>(
     `SELECT a.*, p.published_at AS published_at
      FROM assets a
      JOIN posts p ON a.post_id = p.id
      WHERE p.creator_id = ? AND a.downloaded_at IS NOT NULL
+       AND (a.media_type IN (${kindPlaceholders}) OR a.media_type IS NULL)
      ORDER BY COALESCE(p.published_at, p.created_at) ${dir}, a.created_at ASC`,
-    [creatorId],
+    [creatorId, ...kinds],
   );
   const want = new Set(kinds);
   return rows.filter(a => { const k = mediaKindOf(a.file_name); return k !== null && want.has(k); });
@@ -312,5 +327,3 @@ export async function toggleStarPost(postId: string, star: boolean): Promise<voi
     [star ? 1 : 0, postId]
   );
 }
-
-// Additional upserts for posts and assets can be added similarly

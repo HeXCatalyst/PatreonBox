@@ -21,10 +21,14 @@ interface DownloadState {
 export type DownloadStatus = "idle" | "downloading" | "paused";
 
 /**
- * Live view of the global download queue. Seeds from `get_download_state` and applies
- * incremental `download-job-update` (per-job) and `download-paused` (queue-wide) events.
- * Removals (cancel/clear) happen via commands that don't emit, so callers should
- * `refresh()` after those.
+ * Live view of the global download queue. Seeds from `get_download_state` and
+ * applies incremental events: `download-job-update` (per-job upsert),
+ * `download-job-removed` (per-job delete) and `download-paused` (queue-wide).
+ *
+ * A separate removal event is needed because `download-job-update` can only ever
+ * add or modify a row — there's no way to say "this one is gone" through it.
+ * `refresh()` is still available and still correct, but it's now a safety net
+ * rather than a requirement after cancelling.
  */
 export function useDownloadJobs() {
   const [jobs, setJobs] = useState<Record<string, DownloadJob>>({});
@@ -47,6 +51,14 @@ export function useDownloadJobs() {
   useTauriEvents({
     "download-job-update": (job: DownloadJob) => {
       setJobs(prev => ({ ...prev, [job.asset_id]: job }));
+    },
+    "download-job-removed": (assetId: string) => {
+      setJobs(prev => {
+        if (!(assetId in prev)) return prev;
+        const next = { ...prev };
+        delete next[assetId];
+        return next;
+      });
     },
     "download-paused": (p: boolean) => setPaused(p),
   });

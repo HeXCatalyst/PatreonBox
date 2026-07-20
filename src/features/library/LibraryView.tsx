@@ -349,7 +349,6 @@ export function LibraryView() {
   useEffect(() => {
     async function init() {
       try {
-        console.log("Database initialized for Phase 3.");
         const settings = await loadSettings();
         setInitialSettings(settings);
         setDemoMode(settings.demo_mode);

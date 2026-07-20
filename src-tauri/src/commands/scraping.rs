@@ -1,5 +1,5 @@
 use tauri::{AppHandle, Manager};
-use super::util::{stable_hash, close_window, open_db, build_http_client};
+use super::util::{stable_hash, close_window, open_db};
 
 // --- Sync Checkpoint ---
 #[derive(serde::Serialize, Debug)]
@@ -14,9 +14,22 @@ pub struct SyncCheckpoint {
 pub struct ScrapedPostsRawState(pub std::sync::Mutex<Option<Vec<serde_json::Value>>>);
 pub struct ImageDownloadCancelFlag(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
 
+/// Monotonic heartbeat, bumped every time the in-page crawler reports forward
+/// progress (one tick per API page). `scrape_creator_posts` watches it to tell
+/// "still working, just slow" apart from "genuinely wedged" — see the stall
+/// timeout there.
+pub struct ScrapeProgressTick(pub std::sync::atomic::AtomicU64);
+
+fn bump_progress_tick(app: &AppHandle) {
+    app.state::<ScrapeProgressTick>()
+        .0
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[tauri::command]
 pub async fn report_scraped_posts_progress(app: AppHandle, current: i32, total: i32) -> Result<(), String> {
     use tauri::Emitter;
+    bump_progress_tick(&app);
     let _ = app.emit("sync-progress", serde_json::json!({ "current": current, "total": total }));
     Ok(())
 }
@@ -78,6 +91,16 @@ pub async fn close_post_sync_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Close out a scrape run that produced usable data: record the imported-post
+/// delta in Sync History and tell the frontend to refresh. Shared by the two
+/// success exits (crawler finished; user closed the window mid-run).
+fn finish_scrape_success(app: &AppHandle, run_id: &Option<String>, creator_id: &str, posts_before: i64) {
+    use tauri::Emitter;
+    let posts_after = super::sync_history::creator_post_count(app, creator_id);
+    super::sync_history::finish_run(app, run_id, "success", 1, (posts_after - posts_before).max(0), None);
+    let _ = app.emit("sync-complete", serde_json::json!({ "creator_id": creator_id }));
+}
+
 #[tauri::command]
 pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_id: String, max_posts: Option<usize>, mode: String, resume_cursor: Option<String>, incremental: Option<bool>) -> Result<usize, String> {
     use tauri::{WebviewWindowBuilder, WebviewUrl};
@@ -109,9 +132,17 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
         format!("{}/posts", creator_url.trim_end_matches('/'))
     };
 
-    // Serialize start cursor as a JS literal: null or "cursor_value"
+    // Every value interpolated into the script below is emitted as a JSON
+    // literal rather than pasted between hand-written quotes. JSON string syntax
+    // is a subset of JS, so this is both correct and injection-proof: a quote or
+    // backslash in any of these values escapes itself instead of ending the
+    // literal and spilling into executable code. `limit` and `incremental` are
+    // already a usize and a bool, so they need no such treatment.
+    let js_literal = |v: &str| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string());
+    let creator_id_js = js_literal(&creator_id);
+    let mode_js = js_literal(&mode);
     let start_cursor_js = match &resume_cursor {
-        Some(c) => serde_json::to_string(c).unwrap_or_else(|_| "null".to_string()),
+        Some(c) => js_literal(c),
         None => "null".to_string(),
     };
 
@@ -121,9 +152,9 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
 
             const originalFetch = window.fetch;
             let hasIntercepted = false;
-            const CREATOR_ID = "{}";
+            const CREATOR_ID = {};
             const MAX_POSTS = {};
-            const SYNC_MODE = "{}";
+            const SYNC_MODE = {};
             const START_CURSOR = {};
             const INCREMENTAL = {};
 
@@ -243,7 +274,7 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
                 }}
             }}, 2000);
         }});
-    "#, creator_id, limit, mode, start_cursor_js, incremental);
+    "#, creator_id_js, limit, mode_js, start_cursor_js, incremental);
 
 
     let builder = WebviewWindowBuilder::new(
@@ -267,8 +298,30 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
 
     eprintln!("DEBUG: Post scraper API window created. Waiting for data...");
 
-    // Poll the Mutex until report_scraped_posts_raw fills it
-    for i in 0..120 {
+    // Wait for the crawler to signal completion via report_scraped_posts_raw.
+    //
+    // The bound here is a STALL timeout, not a total-duration one. A total cap
+    // can't work: the in-page crawler deliberately paces itself (1.5s between
+    // pages, ~20 posts a page), so a legitimate 1000-post sync needs well over
+    // two minutes of wall clock. The old fixed 120s cap marked those runs
+    // "failed" in Sync History and stopped the spinner while the webview kept
+    // crawling and writing rows in the background — the archive grew while the
+    // UI insisted the sync had died.
+    //
+    // Instead we watch ScrapeProgressTick, which the crawler bumps once per
+    // page. As long as it keeps moving we keep waiting, however long that takes;
+    // when it goes quiet for STALL_TIMEOUT we conclude something is genuinely
+    // wedged (a Cloudflare challenge page, a dropped connection, a JS error) and
+    // give up. That reports real failures *faster* than the old cap while never
+    // cutting a healthy run short.
+    const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+    let tick_of = |app: &AppHandle| {
+        app.state::<ScrapeProgressTick>().0.load(std::sync::atomic::Ordering::Relaxed)
+    };
+    let mut last_tick = tick_of(&app);
+    let mut last_advance = std::time::Instant::now();
+
+    loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         let posts_opt = {
@@ -278,40 +331,50 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
         };
 
         if let Some(json_pages) = posts_opt {
-            eprintln!("DEBUG: Poll {}: Got {} JSON pages. Closing scraper window.", i, json_pages.len());
-
+            eprintln!("DEBUG: Got {} JSON pages. Closing scraper window.", json_pages.len());
             close_window(&app, "post-scraper");
-
-            let posts_after = super::sync_history::creator_post_count(&app, &creator_id);
-            super::sync_history::finish_run(&app, &run_id, "success", 1, (posts_after - posts_before).max(0), None);
-
-            // Emit sync-complete so frontend can automatically refresh the post list
-            use tauri::Emitter;
-            let _ = app.emit("sync-complete", serde_json::json!({ "creator_id": creator_id }));
-
+            finish_scrape_success(&app, &run_id, &creator_id, posts_before);
             return Ok(1);
         }
 
-        // User closed the scraper window before it finished → stop waiting instead
-        // of spinning until the 120s timeout. Whatever pages already reported are
-        // saved; treat it as a (partial) success so the UI stops and refreshes.
+        // User closed the scraper window before it finished → stop waiting.
+        // Whatever pages already reported are saved; treat it as a (partial)
+        // success so the UI stops and refreshes.
         if tauri::Manager::get_webview_window(&app, "post-scraper").is_none() {
-            eprintln!("DEBUG: scraper window closed by user at poll {}; ending sync.", i);
-            let posts_after = super::sync_history::creator_post_count(&app, &creator_id);
-            super::sync_history::finish_run(&app, &run_id, "success", 1, (posts_after - posts_before).max(0), None);
-            use tauri::Emitter;
-            let _ = app.emit("sync-complete", serde_json::json!({ "creator_id": creator_id }));
+            eprintln!("DEBUG: scraper window closed by user; ending sync.");
+            finish_scrape_success(&app, &run_id, &creator_id, posts_before);
             return Ok(1);
+        }
+
+        let tick = tick_of(&app);
+        if tick != last_tick {
+            last_tick = tick;
+            last_advance = std::time::Instant::now();
+        } else if last_advance.elapsed() >= STALL_TIMEOUT {
+            break;
         }
     }
 
     close_window(&app, "post-scraper");
 
-    let msg = "Post API scraping timed out after 120 seconds.".to_string();
-    super::sync_history::finish_run(&app, &run_id, "failed", 1, 0, Some(msg.clone()));
+    // Stalled. Any pages that did land are already committed, so record the
+    // partial import rather than reporting a flat zero.
+    let imported = (super::sync_history::creator_post_count(&app, &creator_id) - posts_before).max(0);
+    let msg = format!(
+        "Post scraping stalled: no progress for {}s ({} post(s) imported before the stall).",
+        STALL_TIMEOUT.as_secs(),
+        imported,
+    );
+    super::sync_history::finish_run(&app, &run_id, "failed", 1, imported, Some(msg.clone()));
     Err(msg)
 }
 
+/// Classify an asset into the `assets.media_type` bucket.
+///
+/// ⚠️ The extension lists below must stay in sync with `mediaKindOf` in
+/// src/lib/db.ts. That function decides what the media wall will actually
+/// render, so an extension known here but not there produces rows stored as
+/// `media_type='video'` that the UI silently refuses to display.
 fn derive_media_type(mime: &str, filename: &str) -> &'static str {
     // Extension wins for known media types — Patreon sometimes mis-declares the
     // mimetype (e.g. an .mp4 attachment reported as image/jpeg), which would
@@ -332,6 +395,9 @@ fn derive_media_type(mime: &str, filename: &str) -> &'static str {
 #[tauri::command]
 pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: serde_json::Value, cursor: Option<String>, mode: String, incremental: Option<bool>) -> Result<bool, String> {
     eprintln!("DEBUG: Processing streaming API page for creator {} (mode={}, cursor={:?})...", creator_id, mode, cursor);
+    // Counts as forward progress for the stall timeout in `scrape_creator_posts`:
+    // a page that is slow to persist is still a page being worked on.
+    bump_progress_tick(&app);
 
     // "quick" was a removed mode (title/date only); treat old checkpoints as "normal".
     let mode = if mode == "quick" { "normal".to_string() } else { mode };
@@ -612,206 +678,45 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
     Ok(hit_existing)
 }
 
-#[derive(serde::Serialize)]
-pub struct DownloadSummary {
-    pub success: usize,
-    pub failed: usize,
-}
+#[cfg(test)]
+mod tests {
+    use super::derive_media_type;
 
-#[tauri::command]
-pub async fn download_creator_images(app: AppHandle, creator_id: String, enabled_types: Option<Vec<String>>) -> Result<DownloadSummary, String> {
-    super::image_migration::check_not_migrating(&app)?;
-    use tauri::Emitter;
-
-    // Clone the Arc so we own it across awaits without holding a State borrow
-    let cancel_flag = app.state::<ImageDownloadCancelFlag>().0.clone();
-    // Reset: a fresh call always starts from the beginning of the pending list
-    cancel_flag.store(false, std::sync::atomic::Ordering::Release);
-
-    // All asset-type toggles disabled: nothing to download
-    if let Some(ref types) = enabled_types {
-        if types.is_empty() {
-            return Ok(DownloadSummary { success: 0, failed: 0 });
-        }
+    #[test]
+    fn extension_beats_a_wrong_mimetype() {
+        // Patreon has been observed serving .mp4 attachments as image/jpeg;
+        // trusting the mime there would file a video under images.
+        assert_eq!(derive_media_type("image/jpeg", "123_clip.mp4"), "video");
+        assert_eq!(derive_media_type("application/octet-stream", "123_track.mp3"), "audio");
+        assert_eq!(derive_media_type("text/plain", "123_page.png"), "image");
     }
 
-    // Collect pending assets synchronously — rusqlite::Connection is !Send, so we must
-    // drop it before any .await point.
-    struct PendingAsset {
-        id: String,
-        source_url: String,
-        local_path: String,
+    #[test]
+    fn mimetype_is_the_fallback_for_unknown_extensions() {
+        assert_eq!(derive_media_type("image/avif", "123_pic.avif"), "image");
+        assert_eq!(derive_media_type("audio/opus", "123_voice.opus"), "audio");
+        assert_eq!(derive_media_type("video/ogg", "123_reel.ogv"), "video");
     }
 
-    let pending: Vec<PendingAsset> = {
-        let conn = open_db(&app)?;
-
-        // None → no filter (download all); Some(types) → restrict to those media_type values.
-        // IS NULL guard: assets synced before this feature have NULL media_type and are treated
-        // as images to remain downloadable under any type filter.
-        let type_filter = match &enabled_types {
-            None => String::new(),
-            Some(types) => {
-                let placeholders: Vec<String> = (2..=types.len() + 1)
-                    .map(|i| format!("?{}", i))
-                    .collect();
-                format!(
-                    "AND (assets.media_type IN ({}) OR assets.media_type IS NULL)",
-                    placeholders.join(", ")
-                )
-            }
-        };
-
-        let sql = format!(
-            "SELECT assets.id, assets.source_url, assets.local_path
-             FROM assets
-             JOIN posts ON assets.post_id = posts.id
-             WHERE posts.creator_id = ?1
-               AND assets.downloaded_at IS NULL
-               AND assets.source_url IS NOT NULL
-               {}
-             ORDER BY assets.created_at ASC",
-            type_filter
-        );
-
-        let mut params: Vec<rusqlite::types::Value> =
-            vec![rusqlite::types::Value::Text(creator_id.clone())];
-        if let Some(types) = &enabled_types {
-            params.extend(types.iter().map(|t| rusqlite::types::Value::Text(t.clone())));
-        }
-
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| format!("DB prepare error: {}", e))?;
-
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(params), |row| {
-                Ok(PendingAsset {
-                    id: row.get(0)?,
-                    source_url: row.get(1)?,
-                    local_path: row.get(2)?,
-                })
-            })
-            .map_err(|e| format!("DB query error: {}", e))?;
-
-        rows.filter_map(|r| r.ok()).collect()
-        // conn and stmt dropped here
-    };
-
-    let total = pending.len();
-    let _ = app.emit("image-download-progress", serde_json::json!({
-        "current": 0usize,
-        "total": total,
-        "creator_id": &creator_id
-    }));
-
-    if total == 0 {
-        return Ok(DownloadSummary { success: 0, failed: 0 });
+    #[test]
+    fn anything_else_is_a_plain_file() {
+        assert_eq!(derive_media_type("application/pdf", "123_ref.pdf"), "file");
+        assert_eq!(derive_media_type("", "123_noext"), "file");
     }
 
-    let client = build_http_client(&app);
-
-    let mut current = 0usize;
-    let mut failed = 0usize;
-
-    for asset in &pending {
-        // Check if download was cancelled or paused
-        if cancel_flag.load(std::sync::atomic::Ordering::Acquire) {
-            eprintln!("DEBUG: Image download cancelled/paused at {}/{}", current, total);
-            break;
-        }
-
-        // Check if an image-directory migration has started since this loop began.
-        // Migration snapshots the file list once at its start; any file this loop
-        // writes after that snapshot would be silently destroyed by migration's
-        // final `remove_dir_all(&source)`. Stop cleanly rather than race it.
-        if super::image_migration::check_not_migrating(&app).is_err() {
-            eprintln!("DEBUG: Image download stopped — migration started at {}/{}", current, total);
-            break;
-        }
-
-        let dest = super::file_ops::asset_full_path(&app, &asset.local_path)?;
-
-        // Ensure parent directory exists
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).unwrap_or_default();
-        }
-
-        // File already on disk (e.g. pre-migration): mark downloaded, skip re-download
-        if dest.exists() {
-            let now = chrono::Utc::now().to_rfc3339();
-            let file_size = std::fs::metadata(&dest).map(|m| m.len() as i64).ok();
-            // Open a fresh connection for this update (no .await held across it)
-            if let Ok(conn) = open_db(&app) {
-                let _ = conn.execute(
-                    "UPDATE assets SET downloaded_at = ?1, byte_size = ?2 WHERE id = ?3",
-                    rusqlite::params![now, file_size, asset.id],
-                );
-            }
-            current += 1;
-            let _ = app.emit("image-download-progress", serde_json::json!({
-                "current": current,
-                "total": total,
-                "creator_id": &creator_id
-            }));
-            continue;
-        }
-
-        // Download file
-        match client.get(&asset.source_url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.bytes().await {
-                    Ok(bytes) => {
-                        let file_size = bytes.len() as i64;
-                        if let Err(e) = std::fs::write(&dest, &bytes) {
-                            eprintln!("Failed to write {}: {}", dest.display(), e);
-                            failed += 1;
-                        } else {
-                            let now = chrono::Utc::now().to_rfc3339();
-                            // Open a fresh connection for this update (no .await held across it)
-                            if let Ok(conn) = open_db(&app) {
-                                let _ = conn.execute(
-                                    "UPDATE assets SET downloaded_at = ?1, byte_size = ?2 WHERE id = ?3",
-                                    rusqlite::params![now, file_size, asset.id],
-                                );
-                            }
-                            current += 1;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed reading bytes for {}: {}", asset.local_path, e);
-                        failed += 1;
-                    }
-                }
-            }
-            Ok(resp) => {
-                eprintln!("HTTP {} for {}", resp.status(), asset.source_url);
-                failed += 1;
-            }
-            Err(e) => {
-                eprintln!("GET failed for {}: {}", asset.source_url, e);
-                failed += 1;
-            }
-        }
-
-        let _ = app.emit("image-download-progress", serde_json::json!({
-            "current": current,
-            "total": total,
-            "creator_id": &creator_id
-        }));
-
-        // Configurable delay to avoid CDN rate-limiting
-        let (delay_enabled, delay_ms, jitter_enabled, jitter_ms) = {
-            let state = app.state::<super::settings::AppSettingsState>();
-            let s = state.0.read().unwrap_or_else(|e| e.into_inner());
-            (s.image_download_delay_enabled, s.image_download_delay_ms,
-             s.image_download_jitter_enabled, s.image_download_jitter_ms)
-        };
-        if delay_enabled {
-            let jitter = if jitter_enabled { fastrand::u32(0..jitter_ms.max(1)) } else { 0 };
-            tokio::time::sleep(std::time::Duration::from_millis((delay_ms + jitter) as u64)).await;
-        }
+    #[test]
+    fn classification_is_case_insensitive() {
+        assert_eq!(derive_media_type("", "123_CLIP.MP4"), "video");
+        assert_eq!(derive_media_type("", "123_Photo.JPG"), "image");
     }
 
-    Ok(DownloadSummary { success: current, failed })
+    // Every extension listed here must also be listed in `mediaKindOf`
+    // (src/lib/db.ts), or assets of that type get stored but never rendered.
+    // This is the guard for that pairing; update both sides together.
+    #[test]
+    fn video_extensions_match_the_frontend_list() {
+        for ext in ["mp4", "webm", "mov", "m4v", "mkv", "avi"] {
+            assert_eq!(derive_media_type("", &format!("1_a.{ext}")), "video", "{ext}");
+        }
+    }
 }

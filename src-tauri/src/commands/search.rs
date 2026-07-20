@@ -79,7 +79,15 @@ fn run_fts_query(conn: &Connection, match_str: &str, limit: i64) -> Result<Vec<S
 }
 
 fn run_like_query(conn: &Connection, query: &str, limit: i64) -> Result<Vec<SearchResult>, rusqlite::Error> {
-    let like = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+    // Backslash first: it's the ESCAPE character below, so escaping it after the
+    // wildcards would also mangle the `\` this very expression just inserted.
+    // SQLite treats `\` followed by anything other than `%`, `_` or `\` as an
+    // error, so an unescaped literal backslash in the query (e.g. a Windows
+    // path) would make the whole search fail rather than just miss.
+    let like = format!(
+        "%{}%",
+        query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"),
+    );
     let mut stmt = conn.prepare(
         "SELECT p.id, p.creator_id, cr.name, p.title, p.excerpt, p.published_at
          FROM posts p

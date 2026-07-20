@@ -1,8 +1,6 @@
 use tauri::{AppHandle, Manager};
 use super::util::open_db;
 use std::fs;
-use sha2::{Sha256, Digest};
-use std::io::Read;
 use super::settings::AppSettingsState;
 
 /// The directory that currently holds all downloaded images: the user's
@@ -26,12 +24,6 @@ pub fn asset_full_path(app: &AppHandle, local_path: &str) -> Result<std::path::P
     Ok(images_dir(app)?.join(rel))
 }
 
-#[derive(serde::Serialize)]
-pub struct FileMetadata {
-    pub size: u64,
-    pub checksum: Option<String>,
-}
-
 #[tauri::command]
 pub fn resolve_app_data_dir(app: AppHandle) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -41,57 +33,6 @@ pub fn resolve_app_data_dir(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn resolve_images_dir(app: AppHandle) -> Result<String, String> {
     Ok(images_dir(&app)?.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn create_asset_dir(app: AppHandle, creator_id: String, post_id: String) -> Result<String, String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let asset_dir = app_data_dir.join("assets").join(creator_id).join(post_id);
-
-    fs::create_dir_all(&asset_dir).map_err(|e| e.to_string())?;
-
-    Ok(asset_dir.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn get_file_checksum(file_path: String) -> Result<String, String> {
-    let mut file = fs::File::open(file_path).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 1024];
-
-    loop {
-        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-
-    let result = hasher.finalize();
-    Ok(format!("{:x}", result))
-}
-
-#[tauri::command]
-pub fn read_file_metadata(file_path: String) -> Result<FileMetadata, String> {
-    let metadata = fs::metadata(&file_path).map_err(|e| e.to_string())?;
-
-    Ok(FileMetadata {
-        size: metadata.len(),
-        checksum: None,
-    })
-}
-
-#[tauri::command]
-pub fn copy_imported_file(source_path: String, dest_path: String) -> Result<FileMetadata, String> {
-    fs::copy(&source_path, &dest_path).map_err(|e| e.to_string())?;
-
-    let metadata = fs::metadata(&dest_path).map_err(|e| e.to_string())?;
-    let checksum = get_file_checksum(dest_path).ok();
-
-    Ok(FileMetadata {
-        size: metadata.len(),
-        checksum,
-    })
 }
 
 /// Copy a downloaded asset to the user's Downloads folder.

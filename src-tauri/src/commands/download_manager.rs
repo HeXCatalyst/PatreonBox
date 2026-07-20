@@ -64,6 +64,32 @@ fn emit_job(app: &AppHandle, job: &DownloadJob) {
     let _ = app.emit("download-job-update", job);
 }
 
+/// Drop a job from the queue and tell the frontend it's gone.
+///
+/// The removal event matters: `download-job-update` is an upsert on the
+/// frontend, so a deleted job has no way to express itself through that channel
+/// and the row would linger until something happened to call `refresh()`. That
+/// left a cancelled in-flight download visibly "downloading" — with a ticking
+/// progress bar — well after the user cancelled it, and kept it counted in the
+/// sidebar badge.
+fn remove_job(app: &AppHandle, m: &mut DownloadManager, asset_id: &str) {
+    m.entries.remove(asset_id);
+    m.order.retain(|id| id != asset_id);
+    let _ = app.emit("download-job-removed", asset_id);
+}
+
+/// Bulk form of `remove_job`: one pass over `order` regardless of how many jobs
+/// are being dropped.
+fn remove_jobs(app: &AppHandle, m: &mut DownloadManager, asset_ids: &[String]) {
+    if asset_ids.is_empty() { return; }
+    let doomed: std::collections::HashSet<&str> = asset_ids.iter().map(|s| s.as_str()).collect();
+    m.order.retain(|id| !doomed.contains(id.as_str()));
+    for id in asset_ids {
+        m.entries.remove(id);
+        let _ = app.emit("download-job-removed", id);
+    }
+}
+
 /// Read the live concurrency / retry / delay settings each time (so changes apply mid-run).
 fn read_download_settings(app: &AppHandle) -> (usize, u32, bool, u32, bool, u32) {
     let state = app.state::<super::settings::AppSettingsState>();
@@ -104,10 +130,24 @@ pub async fn start_downloads(
         // re-attempt assets that previously errored (e.g. attachments/videos that
         // 403'd before auth cookies were wired up). Clear their error flag so the
         // SELECT below re-enqueues them instead of skipping on `download_error IS NULL`.
+        //
+        // Permanent failures are deliberately left alone. download_streaming
+        // already decides which HTTP codes can't recover (401/403/404/410 — an
+        // expired signed CDN link, a deleted file) and records that verdict as
+        // download_error_kind; clearing it too would throw that work away and
+        // re-queue hundreds of guaranteed-to-fail requests on every click, each
+        // one paying the full request + pacing delay while pushing genuinely new
+        // assets to the back of the queue. Re-syncing the creator's posts mints
+        // fresh signed URLs; `retry_download` / `retry_all_failed` are the
+        // escape hatch once that's happened, since those target failed rows
+        // explicitly and clear the kind regardless of its value. NULL kind =
+        // recorded before this column existed, so those keep the old
+        // retry-everything behaviour.
         if let Some(cid) = &creator_id {
             let _ = conn.execute(
-                "UPDATE assets SET download_error = NULL
+                "UPDATE assets SET download_error = NULL, download_error_kind = NULL
                  WHERE downloaded_at IS NULL AND download_error IS NOT NULL
+                   AND (download_error_kind IS NULL OR download_error_kind <> 'permanent')
                    AND post_id IN (SELECT id FROM posts WHERE creator_id = ?1)",
                 rusqlite::params![cid],
             );
@@ -231,24 +271,30 @@ pub async fn cancel_download(app: AppHandle, asset_id: String) {
     let mut m = mgr_arc.lock().await;
     let downloading = m.entries.get(&asset_id).map(|e| e.job.status == "downloading").unwrap_or(false);
     if !downloading {
-        m.entries.remove(&asset_id);
-        m.order.retain(|id| id != &asset_id);
+        remove_job(&app, &mut m, &asset_id);
     } else if let Some(e) = m.entries.get_mut(&asset_id) {
         // Mark so the worker discards the result instead of requeuing.
         e.job.status = "cancelled".into();
     }
 }
 
-/// Clear a previous failure and re-queue the asset.
+/// Clear a previous failure and re-queue the asset. This targets one row the
+/// user explicitly picked, so it clears permanent failures too — it's the escape
+/// hatch for a link that went stale and has since been re-synced.
 #[tauri::command]
 pub async fn retry_download(app: AppHandle, asset_id: String) -> Result<(), String> {
     if let Ok(conn) = open_db(&app) {
-        let _ = conn.execute("UPDATE assets SET download_error = NULL WHERE id = ?1", rusqlite::params![asset_id]);
+        let _ = conn.execute(
+            "UPDATE assets SET download_error = NULL, download_error_kind = NULL WHERE id = ?1",
+            rusqlite::params![asset_id],
+        );
     }
     start_downloads(app, None, Some(vec![asset_id]), None, None).await.map(|_| ())
 }
 
 /// Clear all recorded failures (optionally for one creator) and re-queue them.
+/// Like `retry_download`, this is an explicit user action, so it also revives
+/// rows marked permanently failed.
 #[tauri::command]
 pub async fn retry_all_failed(app: AppHandle, creator_id: Option<String>) -> Result<usize, String> {
     let ids: Vec<String> = {
@@ -272,7 +318,10 @@ pub async fn retry_all_failed(app: AppHandle, creator_id: Option<String>) -> Res
     if ids.is_empty() { return Ok(0); }
     if let Ok(conn) = open_db(&app) {
         for id in &ids {
-            let _ = conn.execute("UPDATE assets SET download_error = NULL WHERE id = ?1", rusqlite::params![id]);
+            let _ = conn.execute(
+                "UPDATE assets SET download_error = NULL, download_error_kind = NULL WHERE id = ?1",
+                rusqlite::params![id],
+            );
         }
     }
     start_downloads(app, None, Some(ids), None, None).await
@@ -285,18 +334,24 @@ pub async fn retry_all_failed(app: AppHandle, creator_id: Option<String>) -> Res
 pub async fn cancel_all_downloads(app: AppHandle) {
     let mgr_arc = app.state::<DownloadManagerState>().0.clone();
     let mut m = mgr_arc.lock().await;
+    // Flag the in-flight ones first; they can only be dropped by their own
+    // worker, once it notices the flag and discards its result.
     for id in m.order.clone() {
-        match m.entries.get(&id).map(|e| e.job.status.as_str()) {
-            Some("done") => continue,
-            Some("downloading") => {
-                if let Some(e) = m.entries.get_mut(&id) { e.job.status = "cancelled".into(); }
-            }
-            _ => {
-                m.entries.remove(&id);
-                m.order.retain(|x| x != &id);
-            }
+        if let Some(e) = m.entries.get_mut(&id) {
+            if e.job.status == "downloading" { e.job.status = "cancelled".into(); }
         }
     }
+    // Everything else that isn't finished goes now. Collect first, then remove
+    // in one pass — the old shape called `order.retain()` once per removal,
+    // rescanning the whole queue each time while holding the manager lock.
+    let doomed: Vec<String> = m.order.iter()
+        .filter(|id| !matches!(
+            m.entries.get(*id).map(|e| e.job.status.as_str()),
+            Some("done") | Some("cancelled"),
+        ))
+        .cloned()
+        .collect();
+    remove_jobs(&app, &mut m, &doomed);
 }
 
 /// Drop the finished-job rows from the in-memory list (files are untouched).
@@ -307,7 +362,7 @@ pub async fn clear_completed_downloads(app: AppHandle) {
     let done: Vec<String> = m.order.iter()
         .filter(|id| m.entries.get(*id).map(|e| e.job.status == "done").unwrap_or(false))
         .cloned().collect();
-    for id in done { m.entries.remove(&id); m.order.retain(|x| x != &id); }
+    remove_jobs(&app, &mut m, &done);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +420,23 @@ async fn supervisor(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>) {
     }
 }
 
-enum DlOutcome { Ok(u64), Transient(String), Permanent(String) }
+/// How a single download attempt ended.
+///
+/// The distinction that matters is `LocalError` vs `Gone`: both stop the retry
+/// loop for this run, but only `Gone` means the *URL* is dead, and only that
+/// gets persisted as a permanent failure. A disk-full or rename error says
+/// nothing about the link, so it stays retryable on the next explicit download.
+enum DlOutcome {
+    Ok(u64),
+    /// Worth another attempt right away (network blip, 5xx, stream cut short).
+    Transient(String),
+    /// Something on our side failed (temp file, write, rename). Don't spin on it
+    /// now, but the source URL is presumably still good.
+    LocalError(String),
+    /// The server says this URL will never serve again — 401/403/404/410, i.e.
+    /// an expired signed CDN link or a deleted file.
+    Gone(String),
+}
 
 /// Best-effort Patreon session cookies from the app's webview cookie store (shared
 /// with the authenticated login/scraper webviews). Auth-gated attachment/video
@@ -413,23 +484,33 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
         tokio::time::sleep(Duration::from_millis((delay_ms + jitter) as u64)).await;
     }
 
+    // Persist a completed file BEFORE looking at queue state. The bytes are
+    // already on disk under their final name at this point, so whether the user
+    // happened to cancel during the last chunk is irrelevant to the database:
+    // skipping this write would leave a file that exists on disk but reads as
+    // never-downloaded, making it invisible in the media wall and favourites.
+    if let DlOutcome::Ok(size) = &outcome {
+        if let Ok(conn) = open_db(&app) {
+            let now = chrono::Utc::now().to_rfc3339();
+            let _ = conn.execute(
+                "UPDATE assets SET downloaded_at = ?1, byte_size = ?2,
+                                   download_error = NULL, download_error_kind = NULL
+                 WHERE id = ?3",
+                rusqlite::params![now, *size as i64, asset_id],
+            );
+        }
+    }
+
     let mut m = mgr_arc.lock().await;
     m.active = m.active.saturating_sub(1);
-    // If the user cancelled this job mid-flight, drop it.
+    // If the user cancelled this job mid-flight, drop it from the queue.
     if m.entries.get(&asset_id).map(|e| e.job.status == "cancelled").unwrap_or(true) {
-        m.entries.remove(&asset_id);
-        m.order.retain(|id| id != &asset_id);
+        remove_job(&app, &mut m, &asset_id);
         return;
     }
     match outcome {
         DlOutcome::Ok(size) => {
-            if let Ok(conn) = open_db(&app) {
-                let now = chrono::Utc::now().to_rfc3339();
-                let _ = conn.execute(
-                    "UPDATE assets SET downloaded_at = ?1, byte_size = ?2, download_error = NULL WHERE id = ?3",
-                    rusqlite::params![now, size as i64, asset_id],
-                );
-            }
+            // Already written to the DB above; just reflect it in the queue row.
             if let Some(e) = m.entries.get_mut(&asset_id) {
                 e.job.status = "done".into();
                 e.job.bytes_done = size;
@@ -450,16 +531,25 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
                 }
             }
             if !requeued {
-                fail_job(&app, &mut m, &asset_id, msg);
+                fail_job(&app, &mut m, &asset_id, msg, "transient");
             }
         }
-        DlOutcome::Permanent(msg) => fail_job(&app, &mut m, &asset_id, msg),
+        // Our side broke, not the link — record it but keep it retryable.
+        DlOutcome::LocalError(msg) => fail_job(&app, &mut m, &asset_id, msg, "transient"),
+        // The URL itself is dead; don't auto-retry it ever again.
+        DlOutcome::Gone(msg) => fail_job(&app, &mut m, &asset_id, msg, "permanent"),
     }
 }
 
-fn fail_job(app: &AppHandle, m: &mut DownloadManager, asset_id: &str, msg: String) {
+/// Record a terminal failure. `kind` is "permanent" when retrying can't help
+/// (expired/forbidden/deleted URL) and "transient" otherwise — start_downloads
+/// uses it to decide which failures are worth re-queueing.
+fn fail_job(app: &AppHandle, m: &mut DownloadManager, asset_id: &str, msg: String, kind: &str) {
     if let Ok(conn) = open_db(app) {
-        let _ = conn.execute("UPDATE assets SET download_error = ?1 WHERE id = ?2", rusqlite::params![msg, asset_id]);
+        let _ = conn.execute(
+            "UPDATE assets SET download_error = ?1, download_error_kind = ?2 WHERE id = ?3",
+            rusqlite::params![msg, kind, asset_id],
+        );
     }
     if let Some(e) = m.entries.get_mut(asset_id) {
         e.job.status = "failed".into();
@@ -501,7 +591,7 @@ async fn download_streaming(
         let code = status.as_u16();
         let msg = format!("HTTP {}", code);
         // Expired/forbidden/gone links won't recover on retry.
-        return if matches!(code, 401 | 403 | 404 | 410) { DlOutcome::Permanent(msg) } else { DlOutcome::Transient(msg) };
+        return if matches!(code, 401 | 403 | 404 | 410) { DlOutcome::Gone(msg) } else { DlOutcome::Transient(msg) };
     }
 
     let total = resp.content_length();
@@ -512,7 +602,7 @@ async fn download_streaming(
     let tmp = dest.with_extension("part");
     let mut file = match std::fs::File::create(&tmp) {
         Ok(f) => f,
-        Err(e) => return DlOutcome::Permanent(format!("create temp: {}", e)),
+        Err(e) => return DlOutcome::LocalError(format!("create temp: {}", e)),
     };
     let mut downloaded: u64 = 0;
     let mut last_emit = Instant::now();
@@ -522,7 +612,7 @@ async fn download_streaming(
             Ok(Some(chunk)) => {
                 if let Err(e) = file.write_all(&chunk) {
                     let _ = std::fs::remove_file(&tmp);
-                    return DlOutcome::Permanent(format!("write: {}", e));
+                    return DlOutcome::LocalError(format!("write: {}", e));
                 }
                 downloaded += chunk.len() as u64;
                 if last_emit.elapsed() >= Duration::from_millis(150) {
@@ -532,7 +622,7 @@ async fn download_streaming(
                     if m.entries.get(asset_id).map(|e| e.job.status == "cancelled").unwrap_or(true) {
                         drop(file);
                         let _ = std::fs::remove_file(&tmp);
-                        return DlOutcome::Permanent("cancelled".into());
+                        return DlOutcome::LocalError("cancelled".into());
                     }
                     if let Some(e) = m.entries.get_mut(asset_id) {
                         e.job.bytes_done = downloaded;
@@ -550,12 +640,12 @@ async fn download_streaming(
 
     if let Err(e) = file.flush() {
         let _ = std::fs::remove_file(&tmp);
-        return DlOutcome::Permanent(format!("flush: {}", e));
+        return DlOutcome::LocalError(format!("flush: {}", e));
     }
     drop(file);
     if let Err(e) = std::fs::rename(&tmp, dest) {
         let _ = std::fs::remove_file(&tmp);
-        return DlOutcome::Permanent(format!("rename: {}", e));
+        return DlOutcome::LocalError(format!("rename: {}", e));
     }
     DlOutcome::Ok(downloaded)
 }

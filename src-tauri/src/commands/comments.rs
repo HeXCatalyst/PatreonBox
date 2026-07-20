@@ -59,6 +59,14 @@ pub async fn fetch_post_comments(app: AppHandle, post_id: String) -> Result<usiz
         *state.0.lock().map_err(|e| e.to_string())? = None;
     }
 
+    // This id is pasted straight into a URL path, so constrain it to the shapes
+    // we actually mint: a numeric Patreon post id, or — when the API omitted one
+    // — the hex stable_hash fallback from report_scraped_post_page. Alphanumeric
+    // covers both while rejecting `/`, `?`, `#` and `..`, any of which could
+    // point the webview at a different endpoint than intended.
+    if post_id.is_empty() || !post_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("Invalid post id: {}", post_id));
+    }
     let api_url = format!(
         "https://www.patreon.com/api/posts/{}/comments2?include=commenter,first_reply.commenter&fields[comment]=body,created,reply_count&fields[user]=full_name,image_url&page[count]=50&sort=-created&json-api-version=1.0",
         post_id

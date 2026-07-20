@@ -16,6 +16,7 @@ pub mod perf;
 
 // Re-export state types for convenient access from lib.rs .manage() calls
 pub use scraping::ScrapedPostsRawState;
+pub use scraping::ScrapeProgressTick;
 pub use scraping::ImageDownloadCancelFlag;
 pub use subscriptions::ScrapedSubscriptionsState;
 pub use settings::AppSettingsState;
