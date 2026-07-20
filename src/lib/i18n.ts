@@ -165,6 +165,33 @@ export interface Translations {
     close: string;
     settingLabel: string;
   };
+  downloads: {
+    backToLibrary: string;
+    heading: string;
+    countDownloading: (n: number) => string;
+    countQueued: (n: number) => string;
+    countFailed: (n: number) => string;
+    pauseAll: string;
+    resumeAll: string;
+    retryAllFailed: string;
+    cancelAll: string;
+    retry: string;
+    remove: string;
+    sectionDownloading: string;
+    sectionQueued: string;
+    sectionFailed: string;
+    sectionCompleted: string;
+    clearCompleted: string;
+    empty: string;
+    network: string;
+    diskWrite: string;
+    window: string;
+    stalled: (secs: number) => string;
+    collapseMonitor: string;
+    expandMonitor: string;
+    etaLeft: (t: string) => string;
+    queuedDash: string;
+  };
   mediaView: {
     postsTab: string;
     mediaTab: string;
@@ -545,6 +572,33 @@ const zh: Translations = {
     close: '关闭',
     settingLabel: '性能悬浮窗',
   },
+  downloads: {
+    backToLibrary: '返回书库',
+    heading: '下载',
+    countDownloading: (n) => `${n} 个下载中`,
+    countQueued: (n) => `${n} 个排队中`,
+    countFailed: (n) => `${n} 个失败`,
+    pauseAll: '全部暂停',
+    resumeAll: '全部继续',
+    retryAllFailed: '重试全部失败项',
+    cancelAll: '全部取消',
+    retry: '重试',
+    remove: '移除',
+    sectionDownloading: '下载中',
+    sectionQueued: '排队中',
+    sectionFailed: '失败',
+    sectionCompleted: '已完成',
+    clearCompleted: '清除已完成',
+    empty: '还没有下载任务。先到创作者的帖子页发起图片下载。',
+    network: '网络',
+    diskWrite: '磁盘写入',
+    window: '最近 60 秒',
+    stalled: (secs) => `已 ${secs} 秒没有数据`,
+    collapseMonitor: '收起吞吐图',
+    expandMonitor: '展开吞吐图',
+    etaLeft: (t) => `剩余 ${t}`,
+    queuedDash: '—',
+  },
   mediaView: {
     postsTab: '帖子',
     mediaTab: '媒体',
@@ -924,6 +978,33 @@ const en: Translations = {
     expand: 'Expand',
     close: 'Close',
     settingLabel: 'Performance HUD',
+  },
+  downloads: {
+    backToLibrary: 'Back to Library',
+    heading: 'Downloads',
+    countDownloading: (n) => `${n} downloading`,
+    countQueued: (n) => `${n} queued`,
+    countFailed: (n) => `${n} failed`,
+    pauseAll: 'Pause all',
+    resumeAll: 'Resume all',
+    retryAllFailed: 'Retry all failed',
+    cancelAll: 'Cancel all',
+    retry: 'Retry',
+    remove: 'Remove',
+    sectionDownloading: 'Downloading',
+    sectionQueued: 'Queued',
+    sectionFailed: 'Failed',
+    sectionCompleted: 'Completed',
+    clearCompleted: 'Clear completed',
+    empty: "No downloads yet. Start an image download from a creator's Posts view.",
+    network: 'Network',
+    diskWrite: 'Disk write',
+    window: 'last 60s',
+    stalled: (secs) => `No bytes for ${secs}s`,
+    collapseMonitor: 'Collapse throughput chart',
+    expandMonitor: 'Show throughput chart',
+    etaLeft: (t) => `${t} left`,
+    queuedDash: '—',
   },
   mediaView: {
     postsTab: 'Posts',

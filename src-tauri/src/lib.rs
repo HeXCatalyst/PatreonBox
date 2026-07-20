@@ -272,6 +272,7 @@ pub fn run() {
             commands::comments::fetch_post_comments,
             commands::comments::report_post_comments,
             commands::perf::process_stats,
+            commands::perf::disk_io_stats,
             commands::sync_history::get_unseen_failed_count,
             commands::sync_history::mark_sync_runs_seen,
             commands::search::search_posts,
