@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/button";
 
 interface DownloadsViewProps {
   jobs: DownloadJob[];
+  /** Queue-wide pause state, owned by the backend and mirrored by
+   *  useDownloadJobs. Held here rather than locally so the button still reads
+   *  correctly after navigating away and back. */
+  paused: boolean;
   onRefresh: () => void;
   onClose: () => void;
   creatorName: (id: string) => string;
@@ -116,17 +120,17 @@ function ThroughputMonitor({
   );
 }
 
-export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: DownloadsViewProps) {
+export function DownloadsView({ jobs, paused, onRefresh, onClose, creatorName }: DownloadsViewProps) {
   const t = useTranslation();
-  const [paused, setPaused] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(
     () => localStorage.getItem(MONITOR_KEY) !== "0",
   );
 
-  const { downloading, queued, failed, completed } = useMemo(() => {
+  const { downloading, pausedJobs, queued, failed, completed } = useMemo(() => {
     return {
       downloading: jobs.filter(j => j.status === "downloading"),
+      pausedJobs: jobs.filter(j => j.status === "paused"),
       queued: jobs.filter(j => j.status === "queued"),
       failed: jobs.filter(j => j.status === "failed"),
       completed: jobs.filter(j => j.status === "done"),
@@ -147,14 +151,15 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
 
   const act = async (p: Promise<unknown>) => { try { await p; } catch (e) { console.error(e); } onRefresh(); };
 
+  // No optimistic local flip: the backend emits download-paused, which
+  // useDownloadJobs applies, so the button follows the actual queue state.
   const togglePause = async () => {
-    const next = !paused;
-    setPaused(next);
-    await act(invoke(next ? "pause_downloads" : "resume_downloads"));
+    await act(invoke(paused ? "resume_downloads" : "pause_downloads"));
   };
 
   const row = (j: DownloadJob) => {
     const pct = j.bytes_total && j.bytes_total > 0 ? Math.min(100, (j.bytes_done / j.bytes_total) * 100) : null;
+    const isPaused = j.status === "paused";
     const speed = speeds[j.asset_id] ?? 0;
     const rate = fmtRate(speed);
     const eta = j.bytes_total ? fmtEta(j.bytes_total - j.bytes_done, speed) : null;
@@ -167,26 +172,29 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
             {creatorName(j.creator_id)}
             {j.status === "failed" && j.error ? <span className="text-destructive"> · {j.error}</span> : null}
           </div>
-          {j.status === "downloading" && (
+          {/* Paused rows keep the bar: the whole point is that the file is
+              part-downloaded and will continue from where it stopped. */}
+          {(j.status === "downloading" || j.status === "paused") && (
             <div className="mt-1.5 flex items-center gap-3">
-              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+              <div className="flex-1 min-w-[3rem] h-1.5 rounded-full bg-muted overflow-hidden">
                 {pct !== null
-                  ? <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                  ? <div className={`h-full rounded-full ${isPaused ? "bg-muted-foreground/50" : "bg-primary"}`} style={{ width: `${pct}%` }} />
                   : <div className="h-full w-1/3 bg-primary/70 rounded-full animate-pulse" />}
               </div>
-              {/* Fixed-width, tabular slots: without both, the digits change
-                  width as they tick and the whole row jitters. */}
-              <div className="flex items-baseline gap-3 flex-shrink-0 font-mono text-xs tabular-nums">
-                <span className="text-primary font-semibold text-right w-[4.75rem]">
-                  {rate.value} {rate.unit}
+              {/* Fixed-width tabular slots so digits don't shift the row as they
+                  tick, and nowrap so a long "13.1 MB / 26.4 MB" can't fold onto
+                  a second line and change the row's height. */}
+              <div className="flex items-baseline gap-3 flex-shrink-0 font-mono text-xs tabular-nums whitespace-nowrap">
+                <span className={`font-semibold text-right w-[5.5rem] ${isPaused ? "text-muted-foreground" : "text-primary"}`}>
+                  {isPaused ? t.downloads.pausedLabel : `${rate.value} ${rate.unit}`}
                 </span>
-                <span className="text-muted-foreground text-right w-[7.5rem]">
+                <span className="text-muted-foreground text-right w-[9.5rem]">
                   {pct !== null
                     ? `${fmtBytes(j.bytes_done)} / ${fmtBytes(j.bytes_total!)}`
                     : fmtBytes(j.bytes_done)}
                 </span>
-                <span className="text-muted-foreground/70 text-right w-[5rem]">
-                  {eta ? t.downloads.etaLeft(eta) : ""}
+                <span className="text-muted-foreground/70 text-right w-[6.5rem]">
+                  {!isPaused && eta ? t.downloads.etaLeft(eta) : ""}
                 </span>
               </div>
             </div>
@@ -232,6 +240,7 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
         <div className="text-xs text-muted-foreground flex gap-3 ml-1">
           <span>{t.downloads.countDownloading(downloading.length)}</span>
           <span>{t.downloads.countQueued(queued.length)}</span>
+          {pausedJobs.length > 0 && <span>{t.downloads.countPaused(pausedJobs.length)}</span>}
           {failed.length > 0 && <span className="text-destructive">{t.downloads.countFailed(failed.length)}</span>}
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -243,7 +252,7 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
               <RotateCcw /> {t.downloads.retryAllFailed}
             </Button>
           )}
-          {(downloading.length + queued.length + failed.length) > 0 && (
+          {(downloading.length + pausedJobs.length + queued.length + failed.length) > 0 && (
             <Button variant="destructive" size="sm" onClick={() => act(invoke("cancel_all_downloads"))}>
               <XCircle /> {t.downloads.cancelAll}
             </Button>
@@ -268,6 +277,7 @@ export function DownloadsView({ jobs, onRefresh, onClose, creatorName }: Downloa
         ) : (
           <>
             {section(t.downloads.sectionDownloading, downloading)}
+            {section(t.downloads.sectionPaused, pausedJobs)}
             {section(t.downloads.sectionQueued, queued)}
             {section(t.downloads.sectionFailed, failed)}
 

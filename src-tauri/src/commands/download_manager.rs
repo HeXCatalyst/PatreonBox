@@ -13,7 +13,7 @@ pub struct DownloadJob {
     pub asset_id: String,
     pub creator_id: String,
     pub file_name: String,
-    pub status: String, // "queued" | "downloading" | "done" | "failed"
+    pub status: String, // "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled"
     pub bytes_done: u64,
     pub bytes_total: Option<u64>,
     pub error: Option<String>,
@@ -33,6 +33,15 @@ struct JobEntry {
     source_url: String,
     dest: std::path::PathBuf,
     attempts: u32,
+    /// Bytes already on disk in this job's `.part` file that the next attempt
+    /// should resume from. Zero means start clean.
+    ///
+    /// Session-scoped on purpose. Patreon's CDN links are signed and expire, so
+    /// a `.part` left over from a previous run may belong to a URL that no
+    /// longer serves the same bytes — appending to it with a Range request
+    /// would silently produce a corrupt file. Only a pause or retry *within
+    /// this run*, where the URL is known to be the same one, sets this.
+    resume_from: u64,
 }
 
 pub struct DownloadManager {
@@ -58,6 +67,23 @@ impl DownloadManager {
 pub struct DownloadManagerState(pub Arc<Mutex<DownloadManager>>);
 impl DownloadManagerState {
     pub fn new() -> Self { DownloadManagerState(Arc::new(Mutex::new(DownloadManager::new()))) }
+}
+
+/// Where a download's in-progress bytes live.
+///
+/// Appends `.part` rather than using `with_extension`, which *replaces* the
+/// extension — "a.zip" and "a.jpg" would both map to "a.part" and clobber each
+/// other mid-download.
+fn part_path(dest: &std::path::Path) -> std::path::PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    dest.with_file_name(name)
+}
+
+/// Delete a job's partial bytes. Called when a job is cancelled or abandoned, so
+/// half-finished files don't accumulate in the images directory.
+fn remove_partial(dest: &std::path::Path) {
+    let _ = std::fs::remove_file(part_path(dest));
 }
 
 fn emit_job(app: &AppHandle, job: &DownloadJob) {
@@ -228,7 +254,13 @@ pub async fn start_downloads(
                 error: None,
             };
             if !m.entries.contains_key(&row.id) { m.order.push(row.id.clone()); }
-            m.entries.insert(row.id.clone(), JobEntry { job: job.clone(), source_url: row.source_url, dest, attempts: 0 });
+            // A .part left over from a previous run belongs to a URL that may
+            // since have expired and been re-minted, so it can't be resumed onto
+            // safely — bin it and start clean.
+            remove_partial(&dest);
+            m.entries.insert(row.id.clone(), JobEntry {
+                job: job.clone(), source_url: row.source_url, dest, attempts: 0, resume_from: 0,
+            });
             emit_job(&app, &job);
             added += 1;
         }
@@ -259,6 +291,18 @@ pub async fn resume_downloads(app: AppHandle) {
     let mgr_arc = app.state::<DownloadManagerState>().0.clone();
     let mut m = mgr_arc.lock().await;
     m.paused = false;
+    // Workers that stopped mid-stream parked themselves as "paused". Put them
+    // back in the queue so the supervisor picks them up; each keeps its
+    // resume_from, so it continues rather than restarting.
+    let ids: Vec<String> = m.order.clone();
+    for id in ids {
+        if let Some(e) = m.entries.get_mut(&id) {
+            if e.job.status == "paused" {
+                e.job.status = "queued".into();
+                emit_job(&app, &e.job);
+            }
+        }
+    }
     let _ = app.emit("download-paused", false);
     ensure_supervisor(&app, &mgr_arc, &mut m);
 }
@@ -271,6 +315,9 @@ pub async fn cancel_download(app: AppHandle, asset_id: String) {
     let mut m = mgr_arc.lock().await;
     let downloading = m.entries.get(&asset_id).map(|e| e.job.status == "downloading").unwrap_or(false);
     if !downloading {
+        // Includes paused jobs, which own a half-written .part file. An in-flight
+        // one is left to its worker, which deletes the partial on the way out.
+        if let Some(e) = m.entries.get(&asset_id) { remove_partial(&e.dest); }
         remove_job(&app, &mut m, &asset_id);
     } else if let Some(e) = m.entries.get_mut(&asset_id) {
         // Mark so the worker discards the result instead of requeuing.
@@ -351,6 +398,10 @@ pub async fn cancel_all_downloads(app: AppHandle) {
         ))
         .cloned()
         .collect();
+    // Discard half-written files rather than leaving them in the images folder.
+    for id in &doomed {
+        if let Some(e) = m.entries.get(id) { remove_partial(&e.dest); }
+    }
     remove_jobs(&app, &mut m, &doomed);
 }
 
@@ -398,7 +449,11 @@ async fn supervisor(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>) {
                 for id in &queued {
                     if let Some(e) = m.entries.get_mut(id) {
                         e.job.status = "downloading".into();
-                        e.job.bytes_done = 0;
+                        // Don't reset bytes_done: a resumed job already has
+                        // e.resume_from bytes on disk, and zeroing here would
+                        // make the bar jump back to empty before the first
+                        // progress event corrected it.
+                        e.job.bytes_done = e.resume_from;
                         emit_job(&app, &e.job);
                     }
                     m.active += 1;
@@ -436,6 +491,9 @@ enum DlOutcome {
     /// The server says this URL will never serve again — 401/403/404/410, i.e.
     /// an expired signed CDN link or a deleted file.
     Gone(String),
+    /// The user paused the queue mid-stream. The `.part` file is kept with this
+    /// many bytes in it so resuming continues rather than restarting.
+    Paused(u64),
 }
 
 /// Best-effort Patreon session cookies from the app's webview cookie store (shared
@@ -463,10 +521,10 @@ fn is_patreon_url(u: &str) -> bool {
 }
 
 async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asset_id: String) {
-    let (source_url, dest) = {
+    let (source_url, dest, resume_from) = {
         let m = mgr_arc.lock().await;
         match m.entries.get(&asset_id) {
-            Some(e) => (e.source_url.clone(), e.dest.clone()),
+            Some(e) => (e.source_url.clone(), e.dest.clone(), e.resume_from),
             None => { return; }
         }
     };
@@ -475,7 +533,7 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
     // Attach the session cookie only for patreon.com hosts (auth-gated attachments
     // /videos). reqwest drops it on the cross-host redirect to the signed CDN.
     let cookie = if is_patreon_url(&source_url) { patreon_cookie_header(&app) } else { None };
-    let outcome = download_streaming(&app, &mgr_arc, &asset_id, &client, &source_url, &dest, cookie.as_deref()).await;
+    let outcome = download_streaming(&app, &mgr_arc, &asset_id, &client, &source_url, &dest, cookie.as_deref(), resume_from).await;
 
     // Per-request pacing to avoid CDN rate-limiting (kept per worker).
     let (_, retries, delay_enabled, delay_ms, jitter_enabled, jitter_ms) = read_download_settings(&app);
@@ -503,8 +561,9 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
 
     let mut m = mgr_arc.lock().await;
     m.active = m.active.saturating_sub(1);
-    // If the user cancelled this job mid-flight, drop it from the queue.
+    // If the user cancelled this job mid-flight, drop it and its partial bytes.
     if m.entries.get(&asset_id).map(|e| e.job.status == "cancelled").unwrap_or(true) {
+        remove_partial(&dest);
         remove_job(&app, &mut m, &asset_id);
         return;
     }
@@ -512,9 +571,21 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
         DlOutcome::Ok(size) => {
             // Already written to the DB above; just reflect it in the queue row.
             if let Some(e) = m.entries.get_mut(&asset_id) {
+                e.resume_from = 0;
                 e.job.status = "done".into();
                 e.job.bytes_done = size;
                 e.job.bytes_total = Some(size);
+                e.job.error = None;
+                emit_job(&app, &e.job);
+            }
+        }
+        // Paused mid-stream. Hold the job and the bytes it already has so
+        // resuming picks up where it stopped.
+        DlOutcome::Paused(bytes) => {
+            if let Some(e) = m.entries.get_mut(&asset_id) {
+                e.resume_from = bytes;
+                e.job.status = "paused".into();
+                e.job.bytes_done = bytes;
                 e.job.error = None;
                 emit_job(&app, &e.job);
             }
@@ -524,6 +595,9 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
             if let Some(e) = m.entries.get_mut(&asset_id) {
                 if e.attempts < retries {
                     e.attempts += 1;
+                    // The bytes already written are valid, so the retry resumes
+                    // rather than re-fetching from zero.
+                    e.resume_from = std::fs::metadata(part_path(&dest)).map(|md| md.len()).unwrap_or(0);
                     e.job.status = "queued".into();
                     e.job.error = None;
                     emit_job(&app, &e.job);
@@ -531,13 +605,24 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
                 }
             }
             if !requeued {
+                remove_partial(&dest);
                 fail_job(&app, &mut m, &asset_id, msg, "transient");
             }
         }
-        // Our side broke, not the link — record it but keep it retryable.
-        DlOutcome::LocalError(msg) => fail_job(&app, &mut m, &asset_id, msg, "transient"),
-        // The URL itself is dead; don't auto-retry it ever again.
-        DlOutcome::Gone(msg) => fail_job(&app, &mut m, &asset_id, msg, "permanent"),
+        // Our side broke, not the link — record it but keep it retryable. The
+        // partial file goes, since a write/flush failure means we can't vouch
+        // for what actually landed.
+        DlOutcome::LocalError(msg) => {
+            remove_partial(&dest);
+            fail_job(&app, &mut m, &asset_id, msg, "transient");
+        }
+        // The URL itself is dead; don't auto-retry it ever again. Its partial
+        // bytes are useless too — a re-synced URL is a different signed link and
+        // resuming onto it could splice two different responses together.
+        DlOutcome::Gone(msg) => {
+            remove_partial(&dest);
+            fail_job(&app, &mut m, &asset_id, msg, "permanent");
+        }
     }
 }
 
@@ -558,8 +643,12 @@ fn fail_job(app: &AppHandle, m: &mut DownloadManager, asset_id: &str, msg: Strin
     }
 }
 
-/// Streams the response body to a temp file (bounded memory), emitting throttled
-/// byte progress, then atomically renames into place.
+/// Streams the response body to a `.part` file (bounded memory), emitting
+/// throttled byte progress, then atomically renames into place.
+///
+/// `resume_from` > 0 asks the server to continue an interrupted transfer with a
+/// Range request. The caller only sets it when the partial bytes are known to
+/// belong to this same URL within this run.
 async fn download_streaming(
     app: &AppHandle,
     mgr_arc: &Arc<Mutex<DownloadManager>>,
@@ -568,6 +657,7 @@ async fn download_streaming(
     source_url: &str,
     dest: &std::path::Path,
     cookie: Option<&str>,
+    resume_from: u64,
 ) -> DlOutcome {
     if let Some(parent) = dest.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -578,9 +668,18 @@ async fn download_streaming(
         return DlOutcome::Ok(size);
     }
 
+    let tmp = part_path(dest);
+    // Never trust `resume_from` past what's actually on disk: the file may have
+    // been truncated or removed since it was recorded.
+    let on_disk = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+    let mut offset = resume_from.min(on_disk);
+
     let mut req = client.get(source_url);
     if let Some(ck) = cookie {
         req = req.header(reqwest::header::COOKIE, ck);
+    }
+    if offset > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={}-", offset));
     }
     let mut resp = match req.send().await {
         Ok(r) => r,
@@ -590,21 +689,41 @@ async fn download_streaming(
     if !status.is_success() {
         let code = status.as_u16();
         let msg = format!("HTTP {}", code);
+        // A rejected Range (416) just means our offset is stale — the next
+        // attempt starts clean rather than treating it as a dead link.
+        if code == 416 {
+            let _ = std::fs::remove_file(&tmp);
+            return DlOutcome::Transient("stale resume offset".into());
+        }
         // Expired/forbidden/gone links won't recover on retry.
         return if matches!(code, 401 | 403 | 404 | 410) { DlOutcome::Gone(msg) } else { DlOutcome::Transient(msg) };
     }
 
-    let total = resp.content_length();
+    // 206 means the server honoured the Range and is sending the remainder.
+    // Anything else (a plain 200) means it ignored it and is resending the whole
+    // body, so the existing bytes have to go or the file would end up with a
+    // duplicated prefix.
+    let resuming = offset > 0 && status.as_u16() == 206;
+    if offset > 0 && !resuming {
+        offset = 0;
+    }
+
+    // With 206, Content-Length covers only what's still to come.
+    let total = resp.content_length().map(|len| len + offset);
     if let Some(e) = mgr_arc.lock().await.entries.get_mut(asset_id) {
         e.job.bytes_total = total;
     }
 
-    let tmp = dest.with_extension("part");
-    let mut file = match std::fs::File::create(&tmp) {
+    let file_result = if resuming {
+        std::fs::OpenOptions::new().append(true).open(&tmp)
+    } else {
+        std::fs::File::create(&tmp)
+    };
+    let mut file = match file_result {
         Ok(f) => f,
         Err(e) => return DlOutcome::LocalError(format!("create temp: {}", e)),
     };
-    let mut downloaded: u64 = 0;
+    let mut downloaded: u64 = offset;
     let mut last_emit = Instant::now();
 
     loop {
@@ -618,11 +737,24 @@ async fn download_streaming(
                 if last_emit.elapsed() >= Duration::from_millis(150) {
                     last_emit = Instant::now();
                     let mut m = mgr_arc.lock().await;
-                    // Cancelled mid-stream → stop.
+                    // Cancelled mid-stream → stop and bin the partial bytes.
                     if m.entries.get(asset_id).map(|e| e.job.status == "cancelled").unwrap_or(true) {
                         drop(file);
                         let _ = std::fs::remove_file(&tmp);
                         return DlOutcome::LocalError("cancelled".into());
+                    }
+                    // Paused → stop but KEEP the partial bytes, so resuming
+                    // continues from here instead of re-fetching from zero.
+                    // Without this check the flag only stopped the supervisor
+                    // from starting new jobs, and whatever was already in flight
+                    // ran to completion.
+                    if m.paused {
+                        let _ = file.flush();
+                        drop(file);
+                        if let Some(e) = m.entries.get_mut(asset_id) {
+                            e.job.bytes_done = downloaded;
+                        }
+                        return DlOutcome::Paused(downloaded);
                     }
                     if let Some(e) = m.entries.get_mut(asset_id) {
                         e.job.bytes_done = downloaded;
@@ -631,10 +763,9 @@ async fn download_streaming(
                 }
             }
             Ok(None) => break,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                return DlOutcome::Transient(format!("stream: {}", e));
-            }
+            // Keep the partial bytes: everything written so far is intact, so a
+            // retry can resume rather than start over.
+            Err(e) => return DlOutcome::Transient(format!("stream: {}", e)),
         }
     }
 

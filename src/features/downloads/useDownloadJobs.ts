@@ -6,7 +6,7 @@ export interface DownloadJob {
   asset_id: string;
   creator_id: string;
   file_name: string;
-  status: "queued" | "downloading" | "done" | "failed" | "cancelled";
+  status: "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled";
   bytes_done: number;
   bytes_total: number | null;
   error: string | null;
@@ -64,8 +64,10 @@ export function useDownloadJobs() {
   });
 
   const list = useMemo(() => Object.values(jobs), [jobs]);
+  // "paused" counts as outstanding work: the file is half-downloaded and still
+  // waiting on the user, so the sidebar badge shouldn't read as empty.
   const activeCount = useMemo(
-    () => list.filter(j => j.status === "downloading" || j.status === "queued").length,
+    () => list.filter(j => j.status === "downloading" || j.status === "queued" || j.status === "paused").length,
     [list],
   );
 
@@ -73,7 +75,7 @@ export function useDownloadJobs() {
   // it should read as active. paused only shows once nothing is actually running.
   const status: DownloadStatus = useMemo(() => {
     if (list.some(j => j.status === "downloading")) return "downloading";
-    if (paused && list.some(j => j.status === "queued")) return "paused";
+    if (paused && list.some(j => j.status === "queued" || j.status === "paused")) return "paused";
     return "idle";
   }, [list, paused]);
 

@@ -171,6 +171,7 @@ export interface Translations {
     countDownloading: (n: number) => string;
     countQueued: (n: number) => string;
     countFailed: (n: number) => string;
+    countPaused: (n: number) => string;
     pauseAll: string;
     resumeAll: string;
     retryAllFailed: string;
@@ -180,6 +181,8 @@ export interface Translations {
     sectionDownloading: string;
     sectionQueued: string;
     sectionFailed: string;
+    sectionPaused: string;
+    pausedLabel: string;
     sectionCompleted: string;
     clearCompleted: string;
     empty: string;
@@ -578,6 +581,7 @@ const zh: Translations = {
     countDownloading: (n) => `${n} 个下载中`,
     countQueued: (n) => `${n} 个排队中`,
     countFailed: (n) => `${n} 个失败`,
+    countPaused: (n) => `${n} 个已暂停`,
     pauseAll: '全部暂停',
     resumeAll: '全部继续',
     retryAllFailed: '重试全部失败项',
@@ -587,6 +591,8 @@ const zh: Translations = {
     sectionDownloading: '下载中',
     sectionQueued: '排队中',
     sectionFailed: '失败',
+    sectionPaused: '已暂停',
+    pausedLabel: '已暂停',
     sectionCompleted: '已完成',
     clearCompleted: '清除已完成',
     empty: '还没有下载任务。先到创作者的帖子页发起图片下载。',
@@ -985,6 +991,7 @@ const en: Translations = {
     countDownloading: (n) => `${n} downloading`,
     countQueued: (n) => `${n} queued`,
     countFailed: (n) => `${n} failed`,
+    countPaused: (n) => `${n} paused`,
     pauseAll: 'Pause all',
     resumeAll: 'Resume all',
     retryAllFailed: 'Retry all failed',
@@ -994,6 +1001,8 @@ const en: Translations = {
     sectionDownloading: 'Downloading',
     sectionQueued: 'Queued',
     sectionFailed: 'Failed',
+    sectionPaused: 'Paused',
+    pausedLabel: 'Paused',
     sectionCompleted: 'Completed',
     clearCompleted: 'Clear completed',
     empty: "No downloads yet. Start an image download from a creator's Posts view.",

@@ -292,7 +292,7 @@ export function LibraryView() {
   const [view, setView] = useState<'library' | 'settings' | 'downloads' | 'search' | 'favorites'>('library');
   const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'history'>('account');
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, refresh: refreshDownloads } = useDownloadJobs();
+  const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, paused: downloadsPaused, refresh: refreshDownloads } = useDownloadJobs();
   const { unseenFailures } = useUnseenSyncFailures();
   // A search result to open: remembered until the target creator's posts load,
   // then resolved to the actual Post (the creator-change effect clears any prior
@@ -832,6 +832,7 @@ export function LibraryView() {
         ) : view === 'downloads' ? (
           <DownloadsView
             jobs={downloadJobs}
+            paused={downloadsPaused}
             onRefresh={refreshDownloads}
             onClose={() => setView('library')}
             creatorName={(id) => creators.find(c => c.id === id)?.name ?? id}
