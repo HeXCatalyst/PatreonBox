@@ -392,6 +392,144 @@ fn derive_media_type(mime: &str, filename: &str) -> &'static str {
     else { "file" }
 }
 
+/// Download URL, on-disk name, and type for one `included` media/attachment item.
+struct MediaInfo {
+    dl_url: String,
+    filename: String,
+    mime: String,
+    media_type: String,
+}
+
+/// Pick the highest-resolution URL for a `type="media"` item's `attributes`.
+///
+/// `download_url` is the original file; when it's absent (newest posts / gated
+/// media) fall back to image_urls.original (also full-res) BEFORE
+/// image_urls.default, which is only a ~620px preview and looks blurry enlarged.
+fn pick_media_url(attrs: &serde_json::Value) -> Option<&str> {
+    attrs.get("download_url")
+        .or_else(|| attrs.get("image_urls").and_then(|u| u.get("original")))
+        .or_else(|| attrs.get("image_urls").and_then(|u| u.get("url")))
+        .or_else(|| attrs.get("image_urls").and_then(|u| u.get("default")))
+        .and_then(|u| u.as_str())
+}
+
+/// Last path segment of a URL (query stripped), or `fallback` if it's empty.
+fn filename_from_url<'a>(url: &'a str, fallback: &'a str) -> &'a str {
+    let name = url.split('?').next().unwrap_or(url).rsplit('/').next().unwrap_or(fallback);
+    if name.is_empty() { fallback } else { name }
+}
+
+/// Parse the API page's `included` array into `id -> media metadata`. Handles
+/// both type="media" (images embedded in posts) and type="attachment"
+/// (downloadable files). Items with no usable URL are dropped.
+///
+/// Pure (no DB, no IO) so it can be unit-tested against constructed JSON — see
+/// the test module. The post→asset linking that consumes this map stays in the
+/// command, since it also touches the database.
+fn build_media_map(page: &serde_json::Value) -> std::collections::HashMap<String, MediaInfo> {
+    let mut map = std::collections::HashMap::new();
+    let Some(included) = page.get("included").and_then(|inc| inc.as_array()) else { return map; };
+
+    for item in included {
+        let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if id.is_empty() { continue; }
+        let attrs = item.get("attributes");
+
+        let info = match item_type {
+            "media" => {
+                let url = attrs.and_then(pick_media_url).unwrap_or("").to_string();
+                let filename = format!("{}_{}", id, filename_from_url(&url, "media.jpg"));
+                let mime = attrs.and_then(|a| a.get("mimetype")).and_then(|m| m.as_str())
+                    .unwrap_or("image/jpeg").to_string();
+                let media_type = derive_media_type(&mime, &filename).to_string();
+                MediaInfo { dl_url: url, filename, mime, media_type }
+            }
+            "attachment" => {
+                let url = attrs.and_then(|a| a.get("url")).and_then(|u| u.as_str())
+                    .unwrap_or("").to_string();
+                // Attachments carry the original filename in `name`; media items
+                // don't, so only this branch prefers it over the URL segment.
+                let api_name = attrs.and_then(|a| a.get("name")).and_then(|n| n.as_str()).unwrap_or("");
+                let base = if api_name.is_empty() { filename_from_url(&url, "attachment") } else { api_name };
+                let filename = format!("{}_{}", id, base);
+                let mime = attrs.and_then(|a| a.get("mimetype")).and_then(|m| m.as_str())
+                    .unwrap_or("application/octet-stream").to_string();
+                let media_type = derive_media_type(&mime, &filename).to_string();
+                MediaInfo { dl_url: url, filename, mime, media_type }
+            }
+            _ => continue,
+        };
+
+        if !info.dl_url.is_empty() {
+            map.insert(id.to_string(), info);
+        }
+    }
+    map
+}
+
+/// A post's scalar fields, pulled from one `data` array entry.
+struct ParsedPost {
+    post_id: String,
+    title: String,
+    content: String,
+    excerpt: String,
+    published_at: String,
+    url: String,
+    min_cents: Option<i64>,
+}
+
+/// Parse one `type="post"` object into the fields we persist. Returns None for
+/// non-post entries or ones missing `attributes`. Falls back to a stable hash of
+/// creator+title when the API omits an id (rare, but seen on some gated posts).
+///
+/// Pure (no DB, no IO) — the relationships walk and the upsert that use its
+/// output stay in the command.
+fn parse_post(post: &serde_json::Value, creator_id: &str) -> Option<ParsedPost> {
+    if post.get("type").and_then(|t| t.as_str()) != Some("post") {
+        return None;
+    }
+    let attrs = post.get("attributes")?;
+
+    let title = attrs.get("title").and_then(|t| t.as_str()).unwrap_or("Untitled").to_string();
+
+    // Legacy `content` is already HTML; newer posts carry a ProseMirror document
+    // in `content_json_string` that we render ourselves.
+    let content: String = {
+        let legacy = attrs.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        if !legacy.is_empty() {
+            legacy.to_string()
+        } else if let Some(json_str) = attrs.get("content_json_string").and_then(|c| c.as_str()) {
+            serde_json::from_str::<serde_json::Value>(json_str)
+                .map(|doc| super::util::prosemirror_to_html(&doc))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+
+    // Prefer Patreon's own teaser; otherwise take the first 200 chars of content.
+    let excerpt: String = attrs.get("content_teaser_text")
+        .and_then(|t| t.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(200).collect())
+        .unwrap_or_else(|| content.chars().take(200).collect());
+
+    let published_at = attrs.get("published_at").and_then(|d| d.as_str()).unwrap_or("").to_string();
+    let min_cents: Option<i64> = attrs.get("min_cents_pledged_to_view")
+        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)));
+    let url = attrs.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+
+    let api_post_id = post.get("id").and_then(|i| i.as_str()).unwrap_or("");
+    let post_id = if !api_post_id.is_empty() {
+        api_post_id.to_string()
+    } else {
+        format!("{:x}", stable_hash(&format!("{}:{}", creator_id, title)))
+    };
+
+    Some(ParsedPost { post_id, title, content, excerpt, published_at, url, min_cents })
+}
+
 #[tauri::command]
 pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: serde_json::Value, cursor: Option<String>, mode: String, incremental: Option<bool>) -> Result<bool, String> {
     eprintln!("DEBUG: Processing streaming API page for creator {} (mode={}, cursor={:?})...", creator_id, mode, cursor);
@@ -419,127 +557,18 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
     let mut post_count = 0usize;
     let mut existing_count = 0usize;
 
-    // --- Build media map ---
-    // Maps included-item id -> (download_url, filename, mime_type, media_type)
-    // Handles both type="media" (images embedded in posts) and type="attachment" (downloadable files).
+    // Included media/attachment metadata, keyed by id so the per-post
+    // relationships below can resolve which files belong to which post.
+    let media_map = build_media_map(&page);
+    // (post_id, download_url, filename, mime_type, media_type) rows to register.
     let mut media_to_download: Vec<(String, String, String, String, String)> = Vec::new();
-    let mut media_map: std::collections::HashMap<String, (String, String, String, String)> = std::collections::HashMap::new();
-
-    if let Some(included) = page.get("included").and_then(|inc| inc.as_array()) {
-        for item in included {
-            let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            let id = item.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-            if id.is_empty() { continue; }
-
-            let (dl_url, filename, mime, mtype) = match item_type {
-                "media" => {
-                    // Prefer the full-resolution URL. `download_url` is the original
-                    // file; when it's absent (e.g. newest posts / gated media) fall back
-                    // to image_urls.original (also full-res) BEFORE image_urls.default,
-                    // which is only a ~620px display preview and looks blurry enlarged.
-                    let url = item.get("attributes")
-                        .and_then(|a| {
-                            a.get("download_url")
-                                .or_else(|| a.get("image_urls").and_then(|u| u.get("original")))
-                                .or_else(|| a.get("image_urls").and_then(|u| u.get("url")))
-                                .or_else(|| a.get("image_urls").and_then(|u| u.get("default")))
-                        })
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let fname = url.split('?').next().unwrap_or(&url)
-                        .split('/').last().unwrap_or("media");
-                    let fname = format!("{}_{}", id, if fname.is_empty() { "media.jpg" } else { fname });
-                    let mime = item.get("attributes")
-                        .and_then(|a| a.get("mimetype"))
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("image/jpeg")
-                        .to_string();
-                    let mtype = derive_media_type(&mime, &fname).to_string();
-                    (url, fname, mime, mtype)
-                }
-                "attachment" => {
-                    let url = item.get("attributes")
-                        .and_then(|a| a.get("url"))
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let api_name = item.get("attributes")
-                        .and_then(|a| a.get("name"))
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("");
-                    let fname = if !api_name.is_empty() {
-                        format!("{}_{}", id, api_name)
-                    } else {
-                        let url_part = url.split('?').next().unwrap_or(&url)
-                            .split('/').last().unwrap_or("attachment");
-                        format!("{}_{}", id, if url_part.is_empty() { "attachment" } else { url_part })
-                    };
-                    let mime = item.get("attributes")
-                        .and_then(|a| a.get("mimetype"))
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("application/octet-stream")
-                        .to_string();
-                    let mtype = derive_media_type(&mime, &fname).to_string();
-                    (url, fname, mime, mtype)
-                }
-                _ => continue,
-            };
-
-            if !dl_url.is_empty() {
-                media_map.insert(id, (dl_url, filename, mime, mtype));
-            }
-        }
-    }
 
     // --- Save posts ---
     if let Some(data_array) = page.get("data").and_then(|d| d.as_array()) {
         for post in data_array {
-            if post.get("type").and_then(|t| t.as_str()) != Some("post") {
-                continue;
-            }
-
-            let attrs = match post.get("attributes") {
-                Some(a) => a,
-                None => continue,
-            };
-
-            let title = attrs.get("title").and_then(|t| t.as_str()).unwrap_or("Untitled").to_string();
-
-            let content: String = {
-                let legacy = attrs.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                if !legacy.is_empty() {
-                    legacy.to_string()
-                } else if let Some(json_str) = attrs.get("content_json_string").and_then(|c| c.as_str()) {
-                    match serde_json::from_str::<serde_json::Value>(json_str) {
-                        Ok(doc) => {
-                            let html = super::util::prosemirror_to_html(&doc);
-                            if !html.is_empty() { html } else { String::new() }
-                        }
-                        Err(_) => String::new(),
-                    }
-                } else {
-                    String::new()
-                }
-            };
-
-            let excerpt: String = attrs.get("content_teaser_text")
-                .and_then(|t| t.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.chars().take(200).collect())
-                .unwrap_or_else(|| content.chars().take(200).collect());
-
-            let published_at = attrs.get("published_at").and_then(|d| d.as_str()).unwrap_or("").to_string();
-            let min_cents: Option<i64> = attrs.get("min_cents_pledged_to_view")
-                .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)));
-            let url = attrs.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
-
-            let api_post_id = post.get("id").and_then(|i| i.as_str()).unwrap_or("");
-            let post_id = if !api_post_id.is_empty() {
-                api_post_id.to_string()
-            } else {
-                format!("{:x}", stable_hash(&format!("{}:{}", creator_id, title)))
-            };
+            let Some(ParsedPost { post_id, title, content, excerpt, published_at, url, min_cents }) =
+                parse_post(post, &creator_id)
+            else { continue; };
 
             let mut has_assets = 0;
             if let Some(rels) = post.get("relationships") {
@@ -548,9 +577,9 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
                         let items = rel_data.as_array().cloned().unwrap_or_else(|| vec![rel_data.clone()]);
                         for item in items {
                             let r_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-                            if let Some((dl_url, filename, mime_type, media_type)) = media_map.get(&r_id) {
+                            if let Some(info) = media_map.get(&r_id) {
                                 has_assets = 1;
-                                media_to_download.push((post_id.clone(), dl_url.clone(), filename.clone(), mime_type.clone(), media_type.clone()));
+                                media_to_download.push((post_id.clone(), info.dl_url.clone(), info.filename.clone(), info.mime.clone(), info.media_type.clone()));
                             }
                         }
                     }
@@ -680,7 +709,8 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
 
 #[cfg(test)]
 mod tests {
-    use super::derive_media_type;
+    use super::{build_media_map, derive_media_type, parse_post, pick_media_url};
+    use serde_json::json;
 
     #[test]
     fn extension_beats_a_wrong_mimetype() {
@@ -718,5 +748,148 @@ mod tests {
         for ext in ["mp4", "webm", "mov", "m4v", "mkv", "avi"] {
             assert_eq!(derive_media_type("", &format!("1_a.{ext}")), "video", "{ext}");
         }
+    }
+
+    // --- pick_media_url ------------------------------------------------------
+
+    #[test]
+    fn media_url_prefers_download_url() {
+        let attrs = json!({
+            "download_url": "https://cdn/original.png",
+            "image_urls": { "original": "https://cdn/orig2.png", "default": "https://cdn/small.png" }
+        });
+        assert_eq!(pick_media_url(&attrs), Some("https://cdn/original.png"));
+    }
+
+    #[test]
+    fn media_url_falls_back_to_original_before_default() {
+        // No download_url: original is full-res, default is only a ~620px preview,
+        // so original must win.
+        let attrs = json!({
+            "image_urls": { "default": "https://cdn/small.png", "original": "https://cdn/full.png" }
+        });
+        assert_eq!(pick_media_url(&attrs), Some("https://cdn/full.png"));
+    }
+
+    #[test]
+    fn media_url_uses_default_as_last_resort() {
+        let attrs = json!({ "image_urls": { "default": "https://cdn/small.png" } });
+        assert_eq!(pick_media_url(&attrs), Some("https://cdn/small.png"));
+        assert_eq!(pick_media_url(&json!({})), None);
+    }
+
+    // --- build_media_map -----------------------------------------------------
+
+    #[test]
+    fn media_map_names_media_from_url_segment() {
+        let page = json!({ "included": [
+            { "type": "media", "id": "77", "attributes": {
+                "download_url": "https://cdn/artwork.png?token=abc", "mimetype": "image/png" } }
+        ]});
+        let map = build_media_map(&page);
+        let info = map.get("77").expect("media 77 present");
+        assert_eq!(info.filename, "77_artwork.png"); // query stripped, id-prefixed
+        assert_eq!(info.media_type, "image");
+        assert_eq!(info.dl_url, "https://cdn/artwork.png?token=abc");
+    }
+
+    #[test]
+    fn media_map_prefers_attachment_name_over_url() {
+        let page = json!({ "included": [
+            { "type": "attachment", "id": "9", "attributes": {
+                "url": "https://cdn/download?x=1", "name": "chapter.zip",
+                "mimetype": "application/zip" } }
+        ]});
+        let info = build_media_map(&page).remove("9").expect("attachment 9 present");
+        assert_eq!(info.filename, "9_chapter.zip"); // `name`, not the URL segment
+        assert_eq!(info.media_type, "file");
+    }
+
+    #[test]
+    fn media_map_extension_overrides_declared_image_mime() {
+        // Patreon has served .mp4 attachments as image/jpeg; the stored
+        // media_type must follow the extension so it lands in the video filter.
+        let page = json!({ "included": [
+            { "type": "attachment", "id": "3", "attributes": {
+                "url": "https://cdn/clip", "name": "loop.mp4", "mimetype": "image/jpeg" } }
+        ]});
+        assert_eq!(build_media_map(&page).get("3").unwrap().media_type, "video");
+    }
+
+    #[test]
+    fn media_map_drops_urlless_and_unknown_items() {
+        let page = json!({ "included": [
+            { "type": "media", "id": "no-url", "attributes": { "mimetype": "image/png" } },
+            { "type": "user", "id": "u1", "attributes": { "full_name": "Someone" } },
+            { "type": "media", "id": "", "attributes": { "download_url": "https://cdn/x.png" } }
+        ]});
+        assert!(build_media_map(&page).is_empty());
+    }
+
+    #[test]
+    fn media_map_handles_missing_included() {
+        assert!(build_media_map(&json!({ "data": [] })).is_empty());
+    }
+
+    // --- parse_post ----------------------------------------------------------
+
+    #[test]
+    fn parse_post_reads_scalar_fields() {
+        let post = json!({
+            "type": "post", "id": "555",
+            "attributes": {
+                "title": "A Title",
+                "content": "<p>hello</p>",
+                "content_teaser_text": "teaser",
+                "published_at": "2026-01-02T03:04:05Z",
+                "url": "https://patreon.com/posts/555",
+                "min_cents_pledged_to_view": 500
+            }
+        });
+        let p = parse_post(&post, "creatorA").expect("parses");
+        assert_eq!(p.post_id, "555");
+        assert_eq!(p.title, "A Title");
+        assert_eq!(p.content, "<p>hello</p>");
+        assert_eq!(p.excerpt, "teaser");
+        assert_eq!(p.min_cents, Some(500));
+    }
+
+    #[test]
+    fn parse_post_skips_non_posts_and_attributeless() {
+        assert!(parse_post(&json!({ "type": "user", "id": "1" }), "c").is_none());
+        assert!(parse_post(&json!({ "type": "post", "id": "1" }), "c").is_none());
+    }
+
+    #[test]
+    fn parse_post_excerpt_falls_back_to_content() {
+        // No teaser → first 200 chars of the (HTML) content.
+        let body = "x".repeat(300);
+        let post = json!({ "type": "post", "id": "1", "attributes": { "content": body } });
+        let p = parse_post(&post, "c").unwrap();
+        assert_eq!(p.excerpt.chars().count(), 200);
+    }
+
+    #[test]
+    fn parse_post_renders_prosemirror_when_no_legacy_content() {
+        let doc = json!({ "type": "doc", "content": [
+            { "type": "paragraph", "content": [ { "type": "text", "text": "hi" } ] }
+        ]});
+        let post = json!({ "type": "post", "id": "1", "attributes": {
+            "content_json_string": doc.to_string() } });
+        let p = parse_post(&post, "c").unwrap();
+        assert!(p.content.contains("hi"), "rendered HTML should contain the text: {}", p.content);
+    }
+
+    #[test]
+    fn parse_post_hashes_id_when_api_omits_it() {
+        // Same creator+title must yield the same synthetic id both times, so a
+        // re-sync updates the row instead of inserting a duplicate.
+        let post = json!({ "type": "post", "attributes": { "title": "Untitled Draft" } });
+        let a = parse_post(&post, "creatorX").unwrap().post_id;
+        let b = parse_post(&post, "creatorX").unwrap().post_id;
+        assert_eq!(a, b);
+        assert!(!a.is_empty());
+        // A different creator with the same title gets a different id.
+        assert_ne!(a, parse_post(&post, "creatorY").unwrap().post_id);
     }
 }

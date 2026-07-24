@@ -543,24 +543,30 @@ export function LibraryView() {
     }
   };
 
-  const handleSyncPosts = async () => {
-    if (demoMode) return;
-    if (!selectedCreatorId || syncingPosts) return;
+  // Fresh sync and resume-from-checkpoint are the same run with three
+  // differences, so they share one body: resume seeds progress from the
+  // checkpoint, and takes its mode + cursor from it instead of the current UI
+  // state. A fresh sync also forwards the incremental toggle, which resume
+  // deliberately doesn't — resuming continues an existing crawl, where flipping
+  // incremental mid-stream has no meaning.
+  const runSyncPosts = async (checkpoint: SyncCheckpoint | null) => {
+    if (demoMode || !selectedCreatorId || syncingPosts) return;
     const creator = creators.find(c => c.id === selectedCreatorId);
     if (!creator?.profile_url) return;
 
     setSyncingPosts(true);
     setSyncingCreatorId(selectedCreatorId);
-    setSyncProgress(0);
+    setSyncProgress(checkpoint ? checkpoint.posts_done : 0);
     setSyncTotal(0);
     try {
       await invoke<number>('scrape_creator_posts', {
         creatorUrl: creator.profile_url,
         creatorId: creator.id,
         maxPosts: maxPosts,
-        mode: syncMode,
-        resumeCursor: null,
-        incremental: incrementalSync,
+        mode: checkpoint ? checkpoint.mode : syncMode,
+        resumeCursor: checkpoint ? checkpoint.cursor : null,
+        // Only a fresh sync carries the toggle; resume leaves it unset (false).
+        ...(checkpoint ? {} : { incremental: incrementalSync }),
       });
       await loadPosts();
       await loadCreators();
@@ -571,7 +577,7 @@ export function LibraryView() {
         await handleSyncImages();
       }
     } catch (e) {
-      console.error('Failed to sync posts:', e);
+      console.error(checkpoint ? 'Failed to resume posts:' : 'Failed to sync posts:', e);
     } finally {
       setSyncingPosts(false);
       setSyncingCreatorId(null);
@@ -579,6 +585,8 @@ export function LibraryView() {
       setSyncTotal(0);
     }
   };
+
+  const handleSyncPosts = () => runSyncPosts(null);
 
   const handlePausePosts = async () => {
     await invoke('close_post_sync_window');
@@ -597,36 +605,9 @@ export function LibraryView() {
     }
   };
 
-  const handleResumePosts = async () => {
-    if (demoMode || !selectedCreatorId || !postCheckpoint || syncingPosts) return;
-    const creator = creators.find(c => c.id === selectedCreatorId);
-    if (!creator?.profile_url) return;
-
-    setSyncingPosts(true);
-    setSyncingCreatorId(selectedCreatorId);
-    setSyncProgress(postCheckpoint.posts_done);
-    setSyncTotal(0);
-    try {
-      await invoke<number>('scrape_creator_posts', {
-        creatorUrl: creator.profile_url,
-        creatorId: creator.id,
-        maxPosts: maxPosts,
-        mode: postCheckpoint.mode,
-        resumeCursor: postCheckpoint.cursor,
-      });
-      await loadPosts();
-      await loadCreators();
-      if (syncMode === 'full') {
-        await handleSyncImages();
-      }
-    } catch (e) {
-      console.error('Failed to resume posts:', e);
-    } finally {
-      setSyncingPosts(false);
-      setSyncingCreatorId(null);
-      setSyncProgress(0);
-      setSyncTotal(0);
-    }
+  const handleResumePosts = () => {
+    if (!postCheckpoint) return;
+    return runSyncPosts(postCheckpoint);
   };
 
   const handlePauseImages = async () => {
