@@ -30,6 +30,13 @@ export function ImageLightbox({ images, initialIndex, onClose, onSaveSuccess }: 
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const dragStart = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
+  const imgRef = useRef<HTMLImageElement>(null);
+  // The wheel handler is bound to window once, so it reads the live zoom/pan off
+  // refs rather than closing over stale state.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef(pan);
+  panRef.current = pan;
 
   const current = images[currentIndex];
   const hasMultiple = images.length > 1;
@@ -74,12 +81,36 @@ export function ImageLightbox({ images, initialIndex, onClose, onSaveSuccess }: 
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose, images.length]);
 
-  // Mouse wheel to zoom
+  // Mouse wheel to zoom, anchored on the cursor: the point under the pointer
+  // stays put as the image scales, instead of everything zooming toward the
+  // image's centre.
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
+      const img = imgRef.current;
+      const oldZoom = zoomRef.current;
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      setZoom(z => Math.min(4, Math.max(0.25, Math.round(z * factor * 100) / 100)));
+      const newZoom = Math.min(4, Math.max(0.25, Math.round(oldZoom * factor * 100) / 100));
+      if (newZoom === oldZoom) return; // clamped — nothing to do
+
+      // Keep the content point under the cursor fixed. transformOrigin is the
+      // image centre, so a scale by s = newZoom/oldZoom grows the box about its
+      // centre; translating by (0.5 − f)·size·(s − 1) puts the cursor's point
+      // back where it was. f is the cursor's position within the image box,
+      // clamped so zooming while hovering the dark margin anchors to the nearest
+      // edge rather than flinging the image away.
+      if (img) {
+        const rect = img.getBoundingClientRect();
+        const fx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        const fy = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+        const s = newZoom / oldZoom;
+        const prev = panRef.current;
+        setPan({
+          x: prev.x + (0.5 - fx) * rect.width * (s - 1),
+          y: prev.y + (0.5 - fy) * rect.height * (s - 1),
+        });
+      }
+      setZoom(newZoom);
     };
     window.addEventListener("wheel", handleWheel, { passive: false });
     return () => window.removeEventListener("wheel", handleWheel);
@@ -270,6 +301,7 @@ export function ImageLightbox({ images, initialIndex, onClose, onSaveSuccess }: 
       /* Image — pan with drag when zoomed in */
       <img
         key={currentIndex}
+        ref={imgRef}
         src={getUrl(current)}
         alt={current.file_name}
         className="max-w-[90vw] max-h-[85vh] object-contain rounded shadow-2xl select-none"
