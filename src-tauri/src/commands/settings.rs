@@ -153,12 +153,75 @@ pub fn read_settings(app: AppHandle) -> Result<AppSettings, String> {
     Ok(settings)
 }
 
-/// Whether the scraper webview windows should be created hidden (run in the
-/// background). Hidden by default — scraping runs silently for normal users.
-/// Shown only when developer mode is on, so a developer can watch what the
-/// scraper is doing. (Verified: a hidden WKWebView still runs its JS and network
-/// fetches, so scraping works identically while hidden.) A stuck scrape — e.g.
-/// Patreon demanding re-login — is surfaced by the caller's auto-reveal fallback.
+/// Render size for an out-of-the-way scraper window.
+///
+/// A truly hidden (`.visible(false)`) WKWebView has its render loop suspended by
+/// macOS, so Patreon's SPA never fires the API requests the scraper intercepts —
+/// hiding silently breaks scraping. So the unobtrusive mode shows a *small*
+/// window instead: visible enough to keep rendering (and scraping) reliably,
+/// small enough to stay out of the way. It only has to be big enough for the SPA
+/// to mount and fire its first request; pagination is driven by the scraper
+/// swapping the cursor, not by what the window renders, so it needn't be large.
+pub const SCRAPER_UNOBTRUSIVE_SIZE: (f64, f64) = (160.0, 120.0);
+
+/// Opacity for the unobtrusive scraper window while it's scraping — nearly
+/// see-through so it's barely noticeable, but not zero so it still visibly
+/// exists. Restored to 1.0 when the window is grown for a login (a translucent
+/// login page would be hard to read). Opacity doesn't affect rendering, so
+/// unlike hiding it off-screen this can't throttle the scrape.
+pub const SCRAPER_UNOBTRUSIVE_OPACITY: f64 = 0.15;
+
+/// Set a scraper window's opacity (macOS `NSWindow.alphaValue`), which Tauri
+/// exposes no wrapper for. Dispatched to the main thread because AppKit UI calls
+/// off it are undefined behaviour; returns immediately and applies shortly after.
+/// No-op off macOS — there's no equivalent, and the small unfocused window is
+/// unobtrusive enough on its own.
+#[cfg(target_os = "macos")]
+pub fn set_scraper_opacity(app: &AppHandle, label: &str, alpha: f64) {
+    use tauri::Manager;
+    let app_for_closure = app.clone();
+    let label = label.to_string();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = app_for_closure.get_webview_window(&label) {
+            if let Ok(ptr) = w.ns_window() {
+                // ptr is the NSWindow; setAlphaValue: takes a CGFloat (== f64 on
+                // 64-bit macOS). Safety: valid NSWindow pointer, called on the
+                // main thread via run_on_main_thread above.
+                unsafe {
+                    let ns = ptr as *mut objc2::runtime::AnyObject;
+                    let _: () = objc2::msg_send![&*ns, setAlphaValue: alpha];
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_scraper_opacity(_app: &AppHandle, _label: &str, _alpha: f64) {}
+
+/// Bottom-right corner (logical coordinates) for a `w`×`h` window on the primary
+/// monitor, with a small margin — tucks the unobtrusive scraper window into the
+/// corner rather than centering it over whatever the user is doing. Falls back to
+/// a modest offset if the monitor can't be queried.
+pub fn scraper_corner_pos(app: &AppHandle, w: f64, h: f64) -> (f64, f64) {
+    const MARGIN: f64 = 24.0;
+    if let Ok(Some(mon)) = app.primary_monitor() {
+        let scale = mon.scale_factor();
+        let sz = mon.size(); // physical pixels
+        let mon_w = sz.width as f64 / scale;
+        let mon_h = sz.height as f64 / scale;
+        return ((mon_w - w - MARGIN).max(0.0), (mon_h - h - MARGIN).max(0.0));
+    }
+    (MARGIN, MARGIN)
+}
+
+/// Whether the scraper webview windows should run unobtrusively — a small,
+/// unfocused window tucked in the corner (see `SCRAPER_UNOBTRUSIVE_SIZE`) rather
+/// than a full, focused window centered on screen. Unobtrusive by default for
+/// normal users, so an unattended sync doesn't take over the screen; the full
+/// window is shown only in developer mode so a developer can watch the scrape. A
+/// stuck scrape — e.g. Patreon demanding re-login — is surfaced by the caller
+/// growing the window so the user can act.
 pub fn scraper_windows_hidden(app: &AppHandle) -> bool {
     let state = app.state::<AppSettingsState>();
     let hidden = match state.0.read() {

@@ -283,18 +283,28 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
         WebviewUrl::External(posts_url.parse().map_err(|e: url::ParseError| e.to_string())?)
     );
 
-    // A hidden (`.visible(false)`) WKWebView doesn't run the page's render loop, so
-    // Patreon's SPA never fires the /api/posts request the scraper intercepts — hiding
-    // silently breaks scraping. Instead, when it should stay out of the way, show a
-    // small unfocused window: it still renders (scrapes) but doesn't grab the screen.
+    // When it should stay out of the way, show a small, unfocused window tucked
+    // into a corner rather than hiding it — see SCRAPER_UNOBTRUSIVE_SIZE for why
+    // `.visible(false)` can't be used. A stall while small triggers a reveal
+    // below so the user can log in.
     let unobtrusive = super::settings::scraper_windows_hidden(&app);
-    let b = builder
+    let (uw, uh) = super::settings::SCRAPER_UNOBTRUSIVE_SIZE;
+    let mut b = builder
         .title("Scraping API Posts...")
         .visible(true)
         .focused(!unobtrusive)
-        .inner_size(if unobtrusive { 420.0 } else { 800.0 }, if unobtrusive { 300.0 } else { 600.0 })
+        .inner_size(if unobtrusive { uw } else { 800.0 }, if unobtrusive { uh } else { 600.0 })
         .initialization_script(init_script);
+    if unobtrusive {
+        let (x, y) = super::settings::scraper_corner_pos(&app, uw, uh);
+        b = b.position(x, y);
+    }
     let _window = b.build().map_err(|e| e.to_string())?;
+    if unobtrusive {
+        // Fade it almost out of sight while it works; the reveal below restores
+        // full opacity if a login is needed.
+        super::settings::set_scraper_opacity(&app, "post-scraper", super::settings::SCRAPER_UNOBTRUSIVE_OPACITY);
+    }
 
     eprintln!("DEBUG: Post scraper API window created. Waiting for data...");
 
@@ -315,11 +325,18 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
     // give up. That reports real failures *faster* than the old cap while never
     // cutting a healthy run short.
     const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+    // A healthy scrape fires its first /api/posts request within a few seconds.
+    // If the small unobtrusive window makes no progress for this long, the SPA is
+    // most likely blocked on a login or verification page — too small to use — so
+    // grow it and focus it so the user can act. Progress resets the timer, so this
+    // also covers a challenge that appears mid-crawl.
+    const REVEAL_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
     let tick_of = |app: &AppHandle| {
         app.state::<ScrapeProgressTick>().0.load(std::sync::atomic::Ordering::Relaxed)
     };
     let mut last_tick = tick_of(&app);
     let mut last_advance = std::time::Instant::now();
+    let mut revealed = false;
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -350,6 +367,19 @@ pub async fn scrape_creator_posts(app: AppHandle, creator_url: String, creator_i
         if tick != last_tick {
             last_tick = tick;
             last_advance = std::time::Instant::now();
+        } else if unobtrusive && !revealed && last_advance.elapsed() >= REVEAL_AFTER {
+            // Stalled while small — grow the window and bring it forward so the
+            // user can log in / clear a challenge on it (the corner size is too
+            // small to interact with).
+            if let Some(w) = tauri::Manager::get_webview_window(&app, "post-scraper") {
+                let _ = w.set_position(tauri::LogicalPosition::new(120.0, 120.0));
+                let _ = w.set_size(tauri::LogicalSize::new(800.0, 600.0));
+                let _ = w.set_focus();
+            }
+            // Back to fully opaque — a translucent login page is hard to use.
+            super::settings::set_scraper_opacity(&app, "post-scraper", 1.0);
+            revealed = true;
+            eprintln!("DEBUG: post scraper stalled while small; grew window for possible login.");
         } else if last_advance.elapsed() >= STALL_TIMEOUT {
             break;
         }

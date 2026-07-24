@@ -4752,6 +4752,7 @@ dependencies = [
  "fastrand",
  "fs4",
  "libc",
+ "objc2",
  "reqwest",
  "rusqlite",
  "serde",

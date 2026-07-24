@@ -220,17 +220,25 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
         WebviewUrl::External("https://www.patreon.com/home".parse().unwrap())
     );
 
-    // A hidden WKWebView doesn't run its render loop, which stops the page from making
-    // the API calls the scraper depends on. So instead of hiding, show a small unfocused
-    // window when it should stay out of the way — it still renders (scrapes) unseen-ish.
+    // Small unfocused corner window rather than hiding when it should stay out of
+    // the way — see SCRAPER_UNOBTRUSIVE_SIZE for why a truly hidden WKWebView
+    // stops scraping. If it stalls (login needed) the poll loop grows it.
     let unobtrusive = super::settings::scraper_windows_hidden(&app);
-    let b = builder
+    let (uw, uh) = super::settings::SCRAPER_UNOBTRUSIVE_SIZE;
+    let mut b = builder
         .title("Syncing Subscriptions...")
         .visible(true)
         .focused(!unobtrusive)
-        .inner_size(if unobtrusive { 420.0 } else { 800.0 }, if unobtrusive { 300.0 } else { 600.0 })
+        .inner_size(if unobtrusive { uw } else { 800.0 }, if unobtrusive { uh } else { 600.0 })
         .initialization_script(init_script);
+    if unobtrusive {
+        let (x, y) = super::settings::scraper_corner_pos(&app, uw, uh);
+        b = b.position(x, y);
+    }
     let _window = b.build().map_err(|e| e.to_string())?;
+    if unobtrusive {
+        super::settings::set_scraper_opacity(&app, "subscription-scraper", super::settings::SCRAPER_UNOBTRUSIVE_OPACITY);
+    }
 
     eprintln!("DEBUG: Scraper window created. Waiting for init_script to send data via invoke...");
 
@@ -265,13 +273,16 @@ pub async fn scrape_subscriptions(app: AppHandle) -> Result<Vec<ScrapedCreatorDa
 
         // A normal scrape finishes in ~10s. If it's still running well past that,
         // it's probably stuck — e.g. Patreon is showing a login / verification page.
-        // Bring the (off-screen) window on-screen and focus it so the user can act,
-        // rather than let it silently time out.
+        // Grow the small corner window and bring it forward so the user can act on
+        // it, rather than let it silently time out.
         if i == 18 {
             if let Some(w) = app.get_webview_window("subscription-scraper") {
+                let _ = w.set_position(tauri::LogicalPosition::new(120.0, 120.0));
                 let _ = w.set_size(tauri::LogicalSize::new(800.0, 600.0));
                 let _ = w.set_focus();
             }
+            // Restore full opacity so a login page is readable.
+            super::settings::set_scraper_opacity(&app, "subscription-scraper", 1.0);
         }
 
         eprintln!("DEBUG: Poll {}: No data yet, waiting...", i);

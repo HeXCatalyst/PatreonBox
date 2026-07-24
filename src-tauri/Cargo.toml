@@ -43,3 +43,9 @@ tauri-plugin-dialog = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Objective-C runtime, macOS only — used to set the scraper window's opacity
+# (NSWindow.setAlphaValue:), which Tauri exposes no wrapper for. Pinned to the
+# version tauri already resolves so no second copy is pulled in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.4"
+
