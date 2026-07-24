@@ -15,6 +15,14 @@ interface FavoritesViewProps {
 
 const SORTS: FavoriteSort[] = ["favorited", "published", "added", "name", "size"];
 
+// Own key, separate from the per-creator Media wall's — the favourites grid and
+// a creator's grid are browsed at different densities, so their zoom shouldn't
+// track each other.
+const SIZE_KEY = "patreonbox-favorites-size";
+const DEFAULT_SIZE = 150; // matches the grid's previous fixed minmax
+const MIN_SIZE = 80;
+const MAX_SIZE = 400;
+
 /**
  * Favourites: starred posts and favourited images in one place. Media is global
  * across every creator by default, with a creator filter and sorting; images are
@@ -32,6 +40,17 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [size, setSize] = useState<number>(() => {
+    const stored = localStorage.getItem(SIZE_KEY);
+    const n = stored ? parseInt(stored, 10) : DEFAULT_SIZE;
+    return isNaN(n) ? DEFAULT_SIZE : n;
+  });
+
+  const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value, 10);
+    setSize(val);
+    localStorage.setItem(SIZE_KEY, String(val));
+  };
 
 
   const loadMedia = useCallback(async () => {
@@ -124,6 +143,18 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
               {dir === "desc" ? <ArrowDownWideNarrow className="h-3.5 w-3.5" /> : <ArrowUpWideNarrow className="h-3.5 w-3.5" />}
               {dir === "desc" ? t.favorites.desc : t.favorites.asc}
             </ToolbarButton>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">{t.imageGallery.small}</span>
+              <input
+                type="range" min={MIN_SIZE} max={MAX_SIZE} step="8"
+                value={size}
+                onChange={handleSizeChange}
+                className="w-20 h-1 accent-primary cursor-pointer"
+                title={t.favorites.thumbnailSize}
+              />
+              <span className="text-xs text-muted-foreground">{t.imageGallery.large}</span>
+            </div>
           </div>
         )}
       </div>
@@ -135,7 +166,7 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
           ) : media.length === 0 ? (
             <div className="p-10 text-center text-sm text-muted-foreground">{t.favorites.emptyMedia}</div>
           ) : (
-            <div className="p-3 grid gap-1" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
+            <div className="p-3 grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${size}px, 1fr))` }}>
               {media.map((a, i) => (
                 <div key={a.id} className="relative group rounded overflow-hidden bg-muted/20" style={{ aspectRatio: "1" }}>
                   <img

@@ -145,6 +145,7 @@ export interface Translations {
     filterCreator: string;
     allCreators: string;
     sortBy: string;
+    thumbnailSize: string;
     sortName: (k: string) => string;
     asc: string;
     desc: string;
@@ -555,6 +556,7 @@ const zh: Translations = {
     filterCreator: '按创作者筛选',
     allCreators: '全部创作者',
     sortBy: '排序方式',
+    thumbnailSize: '缩略图大小',
     sortName: (k) => ({ favorited: '收藏时间', published: '发布日期', added: '下载日期', name: '文件名', size: '大小' }[k] ?? k),
     asc: '升序',
     desc: '降序',
@@ -965,6 +967,7 @@ const en: Translations = {
     filterCreator: 'Filter by creator',
     allCreators: 'All creators',
     sortBy: 'Sort by',
+    thumbnailSize: 'Thumbnail size',
     sortName: (k) => ({ favorited: 'Favorited', published: 'Published', added: 'Downloaded', name: 'Name', size: 'Size' }[k] ?? k),
     asc: 'Ascending',
     desc: 'Descending',
