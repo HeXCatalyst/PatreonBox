@@ -35,17 +35,15 @@ import type { DatePreset } from "./FilterPanel";
 
 const MAX_ERROR_LENGTH = 80;
 
-interface LibraryPanesProps {
-  creators: (Creator & { post_count: number })[];
-  posts: Post[];
-  selectedCreatorId: string | null;
-  creatorTab: 'posts' | 'media';
-  mediaOrder: 'desc' | 'asc';
-  onCreatorTabChange: (tab: 'posts' | 'media') => void;
-  onMediaOrderChange: (order: 'desc' | 'asc') => void;
-  selectedPost: Post | null;
-  selectedPostAssets: Asset[];
-  searchQuery: string;
+// The props below are grouped by feature so this interface stays navigable and
+// so a whole concern can be added or removed as one unit. Field names inside
+// each group match the flat names the render body already uses, so LibraryPanes
+// just destructures each group back to locals — the JSX that forwards to
+// Sidebar / PostList / WorkbenchView / MediaView is unchanged.
+
+/** Fetching a creator's posts: progress, the toolbar's mode/count, and the
+ *  pause/resume/cancel actions that drive it. */
+interface PostSyncProps {
   syncingPosts: boolean;
   syncingCreatorId: string | null;
   syncProgress: number;
@@ -53,26 +51,52 @@ interface LibraryPanesProps {
   maxPosts: number;
   syncMode: 'normal' | 'full';
   incrementalSync: boolean;
+  postCheckpoint: SyncCheckpoint | null;
+  onSyncPosts: () => void;
+  onPausePosts: () => void;
+  onCancelPosts: () => void;
+  onResumePosts: () => void;
+  onSyncModeChange: (m: 'normal' | 'full') => void;
+  onIncrementalSyncChange: (v: boolean) => void;
+  onMaxPostsChange: (n: number) => void;
+}
+
+/** Downloading a creator's images/attachments — the legacy per-creator image
+ *  sync (distinct from the global Downloads queue). */
+interface ImageDownloadProps {
   syncingImagesCreatorId: string | null;
   imageProgress: number;
   imageTotal: number;
-  postCheckpoint: SyncCheckpoint | null;
   isImagesPaused: boolean;
   imagesDoneCount: number;
   imageFailedCount: number;
-  clearingCreatorId: string | null;
-  showStarred: boolean;
-  syncingSubscriptions: boolean;
-  subscriptionSyncStatus: string;
-  onSyncSubscriptions: () => void;
+  onSyncImages: (enabledTypes?: string[]) => Promise<void>;
+  onPauseImages: () => void;
+  onCancelImages: () => void;
+}
+
+/** The post-list filter bar: tier and date range. */
+interface FilterProps {
   tierFilter: number | null;
   datePreset: DatePreset;
   dateFrom: string | null;
   dateTo: string | null;
   distinctTiers: number[];
-  onSelectCreator: (id: string | null) => void;
-  onCreatorsUpdated: () => void;
-  onDeleteCreator: (id: string) => Promise<void>;
+  onTierChange: (v: number | null) => void;
+  onDatePresetChange: (preset: DatePreset) => void;
+  onDateRangeChange: (from: string | null, to: string | null) => void;
+}
+
+/** Syncing the subscribed-creator list from Patreon (the sidebar's refresh). */
+interface SubscriptionSyncProps {
+  syncingSubscriptions: boolean;
+  subscriptionSyncStatus: string;
+  onSyncSubscriptions: () => void;
+}
+
+/** Rail/sidebar chrome: the buttons that open other top-level views, plus the
+ *  badges those buttons carry. */
+interface NavProps {
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
   onOpenSearch: () => void;
@@ -80,41 +104,70 @@ interface LibraryPanesProps {
   downloadActiveCount: number;
   downloadStatus: DownloadStatus;
   settingsErrorCount: number;
+}
+
+interface LibraryPanesProps {
+  // Core library data + selection, needed by every layout — genuinely
+  // cross-cutting, so left flat rather than forced into a group.
+  creators: (Creator & { post_count: number })[];
+  posts: Post[];
+  selectedCreatorId: string | null;
+  selectedPost: Post | null;
+  selectedPostAssets: Asset[];
+  creatorTab: 'posts' | 'media';
+  mediaOrder: 'desc' | 'asc';
+  searchQuery: string;
+  showStarred: boolean;
+  clearingCreatorId: string | null;
+  onCreatorTabChange: (tab: 'posts' | 'media') => void;
+  onMediaOrderChange: (order: 'desc' | 'asc') => void;
+  onSearch: (q: string) => void;
+  onSelectCreator: (id: string | null) => void;
+  onCreatorsUpdated: () => void;
+  onDeleteCreator: (id: string) => Promise<void>;
   onSelectStarred: () => void;
   onSelectPost: (post: Post) => void;
   onOpenPost: (creatorId: string, postId: string) => void;
-  onSyncPosts: () => void;
   onClearData: () => Promise<void>;
-  onSyncImages: (enabledTypes?: string[]) => Promise<void>;
-  onSyncModeChange: (m: 'normal' | 'full') => void;
-  onIncrementalSyncChange: (v: boolean) => void;
-  onMaxPostsChange: (n: number) => void;
-  onSearch: (q: string) => void;
-  onPausePosts: () => void;
-  onCancelPosts: () => void;
-  onResumePosts: () => void;
-  onPauseImages: () => void;
-  onCancelImages: () => void;
   onToggleStar: (post: Post, newStarred: boolean) => void;
-  onTierChange: (v: number | null) => void;
-  onDatePresetChange: (preset: DatePreset) => void;
-  onDateRangeChange: (from: string | null, to: string | null) => void;
+  // Feature-grouped props.
+  postSync: PostSyncProps;
+  imageDownload: ImageDownloadProps;
+  filters: FilterProps;
+  subscriptions: SubscriptionSyncProps;
+  nav: NavProps;
 }
 
 function LibraryPanes({
-  creators, posts, selectedCreatorId, creatorTab, mediaOrder, onCreatorTabChange, onMediaOrderChange,
-  selectedPost, selectedPostAssets,
-  searchQuery, syncingPosts, syncingCreatorId, syncProgress, syncTotal,
-  maxPosts, syncMode, incrementalSync, syncingImagesCreatorId, imageProgress, imageTotal,
-  postCheckpoint, isImagesPaused, imagesDoneCount, imageFailedCount, clearingCreatorId, showStarred,
-  syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
-  tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
-  onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings, onOpenDownloads, onOpenSearch, onOpenFavorites, downloadActiveCount, downloadStatus, settingsErrorCount, onSelectStarred,
-  onSelectPost, onOpenPost, onSyncPosts, onClearData, onSyncImages, onSyncModeChange, onIncrementalSyncChange,
-  onMaxPostsChange, onSearch, onPausePosts, onCancelPosts, onResumePosts,
-  onPauseImages, onCancelImages, onToggleStar,
-  onTierChange, onDatePresetChange, onDateRangeChange,
+  creators, posts, selectedCreatorId, selectedPost, selectedPostAssets,
+  creatorTab, mediaOrder, searchQuery, showStarred, clearingCreatorId,
+  onCreatorTabChange, onMediaOrderChange, onSearch, onSelectCreator,
+  onCreatorsUpdated, onDeleteCreator, onSelectStarred, onSelectPost, onOpenPost,
+  onClearData, onToggleStar,
+  postSync, imageDownload, filters, subscriptions, nav,
 }: LibraryPanesProps) {
+  // Spread the feature groups back to flat locals. The grouping is for the
+  // interface and the call site; the render body below keeps reading the
+  // individual values, so it doesn't change.
+  const {
+    syncingPosts, syncingCreatorId, syncProgress, syncTotal, maxPosts, syncMode,
+    incrementalSync, postCheckpoint, onSyncPosts, onPausePosts, onCancelPosts,
+    onResumePosts, onSyncModeChange, onIncrementalSyncChange, onMaxPostsChange,
+  } = postSync;
+  const {
+    syncingImagesCreatorId, imageProgress, imageTotal, isImagesPaused,
+    imagesDoneCount, imageFailedCount, onSyncImages, onPauseImages, onCancelImages,
+  } = imageDownload;
+  const {
+    tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
+    onTierChange, onDatePresetChange, onDateRangeChange,
+  } = filters;
+  const { syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions } = subscriptions;
+  const {
+    onOpenSettings, onOpenDownloads, onOpenSearch, onOpenFavorites,
+    downloadActiveCount, downloadStatus, settingsErrorCount,
+  } = nav;
+
   const { settings, updateSettings } = useSettings();
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebar_width);
   const [postListWidth, setPostListWidth] = useState(settings.post_list_width);
@@ -827,67 +880,62 @@ export function LibraryView() {
           <LibraryPanes
             creators={creators}
             posts={posts}
-            downloadActiveCount={downloadActiveCount}
-            downloadStatus={downloadStatus}
-            settingsErrorCount={unseenFailures}
-            onOpenDownloads={() => setView('downloads')}
-            onOpenSearch={() => setView('search')}
             selectedCreatorId={selectedCreatorId}
-            creatorTab={creatorTab}
-            mediaOrder={mediaOrder}
-            onCreatorTabChange={setCreatorTab}
-            onMediaOrderChange={setMediaOrder}
             selectedPost={selectedPost}
             selectedPostAssets={selectedPostAssets}
+            creatorTab={creatorTab}
+            mediaOrder={mediaOrder}
             searchQuery={searchQuery}
-            syncingPosts={syncingPosts}
-            syncingCreatorId={syncingCreatorId}
-            syncProgress={syncProgress}
-            syncTotal={syncTotal}
-            maxPosts={maxPosts}
-            syncMode={syncMode}
-            incrementalSync={incrementalSync}
-            syncingImagesCreatorId={syncingImagesCreatorId}
-            imageProgress={imageProgress}
-            imageTotal={imageTotal}
-            postCheckpoint={postCheckpoint}
-            isImagesPaused={isImagesPaused}
-            imagesDoneCount={imagesDoneCount}
-            imageFailedCount={imageFailedCount}
-            clearingCreatorId={clearingCreatorId}
             showStarred={showStarred}
-            syncingSubscriptions={syncingSubscriptions}
-            subscriptionSyncStatus={subscriptionSyncStatus}
-            onSyncSubscriptions={handleSyncSubscriptions}
+            clearingCreatorId={clearingCreatorId}
+            onCreatorTabChange={setCreatorTab}
+            onMediaOrderChange={setMediaOrder}
+            onSearch={setSearchQuery}
             onSelectCreator={handleSelectCreator}
             onCreatorsUpdated={loadCreators}
             onDeleteCreator={handleDeleteCreator}
-            onOpenSettings={handleOpenSettings}
             onSelectStarred={handleSelectStarred}
-            onOpenFavorites={handleSelectStarred}
             onSelectPost={setSelectedPost}
             onOpenPost={handleOpenPost}
-            onSyncPosts={handleSyncPosts}
             onClearData={handleClearData}
-            onSyncImages={handleSyncImages}
-            onSyncModeChange={setSyncMode}
-            onIncrementalSyncChange={setIncrementalSync}
-            onMaxPostsChange={setMaxPosts}
-            onSearch={setSearchQuery}
-            onPausePosts={handlePausePosts}
-            onCancelPosts={handleCancelPosts}
-            onResumePosts={handleResumePosts}
-            onPauseImages={handlePauseImages}
-            onCancelImages={handleCancelImages}
             onToggleStar={handleToggleStar}
-            tierFilter={tierFilter}
-            datePreset={datePreset}
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            distinctTiers={distinctTiers}
-            onTierChange={handleTierChange}
-            onDatePresetChange={handleDatePresetChange}
-            onDateRangeChange={handleDateRangeChange}
+            postSync={{
+              syncingPosts, syncingCreatorId, syncProgress, syncTotal, maxPosts,
+              syncMode, incrementalSync, postCheckpoint,
+              onSyncPosts: handleSyncPosts,
+              onPausePosts: handlePausePosts,
+              onCancelPosts: handleCancelPosts,
+              onResumePosts: handleResumePosts,
+              onSyncModeChange: setSyncMode,
+              onIncrementalSyncChange: setIncrementalSync,
+              onMaxPostsChange: setMaxPosts,
+            }}
+            imageDownload={{
+              syncingImagesCreatorId, imageProgress, imageTotal, isImagesPaused,
+              imagesDoneCount, imageFailedCount,
+              onSyncImages: handleSyncImages,
+              onPauseImages: handlePauseImages,
+              onCancelImages: handleCancelImages,
+            }}
+            filters={{
+              tierFilter, datePreset, dateFrom, dateTo, distinctTiers,
+              onTierChange: handleTierChange,
+              onDatePresetChange: handleDatePresetChange,
+              onDateRangeChange: handleDateRangeChange,
+            }}
+            subscriptions={{
+              syncingSubscriptions, subscriptionSyncStatus,
+              onSyncSubscriptions: handleSyncSubscriptions,
+            }}
+            nav={{
+              onOpenSettings: handleOpenSettings,
+              onOpenDownloads: () => setView('downloads'),
+              onOpenSearch: () => setView('search'),
+              onOpenFavorites: handleSelectStarred,
+              downloadActiveCount,
+              downloadStatus,
+              settingsErrorCount: unseenFailures,
+            }}
           />
         )}
         </div>
