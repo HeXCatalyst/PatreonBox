@@ -69,7 +69,7 @@ pub struct AppSettings {
     pub migration_verify_mode: String,  // "size" | "hash"
     #[serde(default)]
     pub demo_mode: bool,
-    // Parallel downloads. Clamped to 1..=5 both in the settings UI and again in
+    // Parallel downloads. Clamped to 1..=10 both in the settings UI and again in
     // the download manager, which re-reads it every scheduling pass — so a change
     // takes effect on the running queue without a restart.
     #[serde(default = "default_download_concurrency")]

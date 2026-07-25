@@ -121,7 +121,7 @@ fn read_download_settings(app: &AppHandle) -> (usize, u32, bool, u32, bool, u32)
     let state = app.state::<super::settings::AppSettingsState>();
     let s = state.0.read().unwrap_or_else(|e| e.into_inner());
     (
-        (s.download_concurrency.clamp(1, 5)) as usize,
+        (s.download_concurrency.clamp(1, 10)) as usize,
         s.download_retries,
         s.image_download_delay_enabled,
         s.image_download_delay_ms,

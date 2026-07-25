@@ -31,12 +31,12 @@ export function SyncSection() {
     if (!isNaN(val) && val >= 5) updateSettings({ download_timeout_secs: val });
   };
 
-  // Clamped to the same 1..=5 the download manager enforces, so the field can't
+  // Clamped to the same 1..=10 the download manager enforces, so the field can't
   // show a value the backend won't honour. Takes effect on the next scheduling
   // pass — the worker pool re-reads it each loop, no restart needed.
   const commitConcurrency = (raw: string) => {
     const val = parseInt(raw);
-    if (!isNaN(val)) updateSettings({ download_concurrency: Math.min(5, Math.max(1, val)) });
+    if (!isNaN(val)) updateSettings({ download_concurrency: Math.min(10, Math.max(1, val)) });
   };
 
   const commitRetries = (raw: string) => {
@@ -108,7 +108,7 @@ export function SyncSection() {
         <input
           type="number"
           min={1}
-          max={5}
+          max={10}
           defaultValue={settings.download_concurrency}
           onBlur={e => commitConcurrency(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && commitConcurrency((e.target as HTMLInputElement).value)}
