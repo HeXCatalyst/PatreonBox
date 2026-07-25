@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
-import { useTranslation } from "../../lib/i18n";
+import { translations } from "../../lib/i18n";
 import {
   getCreators,
   getPosts,
@@ -32,10 +32,21 @@ import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import type { AppSettings } from "../../types/settings";
 import { DEFAULT_SETTINGS } from "../../types/settings";
 import { SettingsProvider, useSettings } from "../settings/SettingsContext";
+import { useNotify } from "../notifications/NotificationContext";
+import { ToastStack } from "../notifications/ToastStack";
+import { NotificationCenter } from "../notifications/NotificationCenter";
+import type { NotifyAction } from "../notifications/store";
+import { emitDummyNotifications } from "../notifications/dummyNotifications";
 import { ResizeDivider } from "./ResizeDivider";
 import type { DatePreset } from "./FilterPanel";
 
 const MAX_ERROR_LENGTH = 80;
+/** Error text long enough to be a stack trace is useless in a notification card. */
+const MAX_NOTIFY_DETAIL = 160;
+
+function errorDetail(e: unknown): string {
+  return String(e).slice(0, MAX_NOTIFY_DETAIL);
+}
 
 // The props below are grouped by feature so this interface stays navigable and
 // so a whole concern can be added or removed as one unit. Field names inside
@@ -103,6 +114,7 @@ interface NavProps {
   onOpenDownloads: () => void;
   onOpenSearch: () => void;
   onOpenFavorites: () => void;
+  onOpenNotifications: () => void;
   downloadActiveCount: number;
   downloadStatus: DownloadStatus;
   settingsErrorCount: number;
@@ -166,7 +178,7 @@ function LibraryPanes({
   } = filters;
   const { syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions } = subscriptions;
   const {
-    onOpenSettings, onOpenDownloads, onOpenSearch, onOpenFavorites,
+    onOpenSettings, onOpenDownloads, onOpenSearch, onOpenFavorites, onOpenNotifications,
     downloadActiveCount, downloadStatus, settingsErrorCount,
   } = nav;
 
@@ -198,6 +210,7 @@ function LibraryPanes({
         onOpenFavorites={onOpenFavorites}
         onOpenDownloads={onOpenDownloads}
         onOpenSettings={onOpenSettings}
+        onOpenNotifications={onOpenNotifications}
         onSyncSubscriptions={onSyncSubscriptions}
         syncingSubscriptions={syncingSubscriptions}
         downloadStatus={downloadStatus}
@@ -243,6 +256,7 @@ function LibraryPanes({
           onOpenSettings={onOpenSettings}
           onOpenDownloads={onOpenDownloads}
           onOpenSearch={onOpenSearch}
+          onOpenNotifications={onOpenNotifications}
           downloadActiveCount={downloadActiveCount}
           downloadStatus={downloadStatus}
           settingsErrorCount={settingsErrorCount}
@@ -363,7 +377,13 @@ export function LibraryView() {
   const [selectedPostAssets, setSelectedPostAssets] = useState<Asset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const t = useTranslation();
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const notify = useNotify();
+  // Not useTranslation(): this component *renders* SettingsProvider, so it sits
+  // outside its own context and would always read DEFAULT_SETTINGS. Keying off
+  // the settings it loaded itself makes these strings follow the saved language
+  // (a live switch still only reaches them on the next launch).
+  const t = translations[initialSettings.language ?? 'zh'];
   const [syncingPosts, setSyncingPosts] = useState(false);
   const [syncingCreatorId, setSyncingCreatorId] = useState<string | null>(null);
   const [syncingSubscriptions, setSyncingSubscriptions] = useState(false);
@@ -460,6 +480,19 @@ export function LibraryView() {
     "image-download-progress": (payload: { current: number; total: number; creator_id: string }) => {
       setImageProgress(payload.current);
       if (payload.total > 0) setImageTotal(payload.total);
+    },
+    // The one place per-file failures surface. A batch can fail dozens of files,
+    // so they all share a dedupe key and arrive as one card with a count.
+    "download-job-update": (job: { status: string; error: string | null; creator_id?: string }) => {
+      if (job.status !== 'failed') return;
+      notify({
+        severity: 'error',
+        title: t.notifications.imageDownloadFailed,
+        detail: job.error ? job.error.slice(0, MAX_NOTIFY_DETAIL) : undefined,
+        source: creators.find(c => c.id === job.creator_id)?.name,
+        dedupeKey: 'download-job-failed',
+        action: { kind: 'open-downloads' },
+      });
     },
     "comment-backfill-progress": (payload: { done: number; total: number }) => {
       setCommentProgress({ done: payload.done, total: payload.total });
@@ -600,6 +633,14 @@ export function LibraryView() {
       await refreshDownloads();
     } catch (e) {
       console.error('Failed to start downloads:', e);
+      notify({
+        severity: 'error',
+        title: t.notifications.imageDownloadFailed,
+        detail: errorDetail(e),
+        source: creators.find(c => c.id === selectedCreatorId)?.name,
+        dedupeKey: `image-download:${selectedCreatorId}`,
+        action: { kind: 'open-downloads' },
+      });
     }
   };
 
@@ -628,6 +669,13 @@ export function LibraryView() {
       await invoke<number>('fetch_comments_for_posts', { postIds: ids });
     } catch (e) {
       console.error('Comment backfill failed:', e);
+      notify({
+        severity: 'warning',
+        title: t.notifications.commentFetchFailed,
+        detail: errorDetail(e),
+        source: creators.find(c => c.id === creatorId)?.name,
+        dedupeKey: `comment-fetch:${creatorId}`,
+      });
     } finally {
       setCommentProgress(null);
     }
@@ -646,8 +694,21 @@ export function LibraryView() {
       if (ids.length === 0) return;
       setCommentProgress({ done: 0, total: ids.length });
       await invoke<number>('fetch_comments_for_posts', { postIds: ids });
+      // This one runs for tens of minutes with nobody watching, so its result
+      // is worth a notification even when it succeeds.
+      notify({
+        severity: 'success',
+        title: t.notifications.commentFetchDone(ids.length),
+        dedupeKey: 'comment-backfill-all',
+      });
     } catch (e) {
       console.error('Comment backfill failed:', e);
+      notify({
+        severity: 'error',
+        title: t.notifications.commentFetchFailed,
+        detail: errorDetail(e),
+        dedupeKey: 'comment-backfill-all',
+      });
     } finally {
       setCommentProgress(null);
       // Reflect newly-cached comments in whatever post is open.
@@ -688,6 +749,14 @@ export function LibraryView() {
       }
     } catch (e) {
       console.error(checkpoint ? 'Failed to resume posts:' : 'Failed to sync posts:', e);
+      notify({
+        severity: 'error',
+        title: t.notifications.postSyncFailed,
+        detail: errorDetail(e),
+        source: creator.name,
+        dedupeKey: `post-sync:${creator.id}`,
+        action: { kind: 'open-creator', payload: { creatorId: creator.id } },
+      });
     } finally {
       setSyncingPosts(false);
       setSyncingCreatorId(null);
@@ -697,6 +766,26 @@ export function LibraryView() {
   };
 
   const handleSyncPosts = () => runSyncPosts(null);
+
+  /** Maps a notification's serialisable action ref onto real navigation. */
+  const handleNotificationAction = (action: NotifyAction) => {
+    switch (action.kind) {
+      case 'open-downloads':
+        setView('downloads');
+        break;
+      case 'open-creator': {
+        const id = action.payload?.creatorId;
+        if (typeof id === 'string') {
+          setView('library');
+          handleSelectCreator(id);
+        }
+        break;
+      }
+      case 'open-settings':
+        handleOpenSettings();
+        break;
+    }
+  };
 
   const handlePausePosts = async () => {
     await invoke('close_post_sync_window');
@@ -796,9 +885,21 @@ export function LibraryView() {
         emit("subscriptions-synced");
       } catch (e: any) {
         setSubscriptionSyncStatus(t.sidebar.statusDbError(String(e).substring(0, MAX_ERROR_LENGTH)));
+        notify({
+          severity: 'error',
+          title: t.notifications.subscriptionSyncFailed,
+          detail: errorDetail(e),
+          dedupeKey: 'subscription-sync',
+        });
       }
     } catch (e: any) {
       setSubscriptionSyncStatus(t.sidebar.statusError(String(e).substring(0, MAX_ERROR_LENGTH)));
+      notify({
+        severity: 'error',
+        title: t.notifications.subscriptionSyncFailed,
+        detail: errorDetail(e),
+        dedupeKey: 'subscription-sync',
+      });
     } finally {
       setSyncingSubscriptions(false);
       setTimeout(() => setSubscriptionSyncStatus(""), 8000);
@@ -890,6 +991,14 @@ export function LibraryView() {
       label: t.commandPalette.cmdBackfillCommentsAll,
       run: () => { void backfillAllComments(); },
     },
+    // Developer mode only: fires the same shapes the batch tasks emit, so the
+    // toast stack, coalescing and centre can be eyeballed without waiting for a
+    // real sync to fail. The automated coverage lives in store.test.ts.
+    ...(initialSettings.developer_mode_enabled ? [{
+      id: 'emit-dummy-notifications',
+      label: t.commandPalette.cmdEmitDummyNotifications,
+      run: () => emitDummyNotifications(notify, t),
+    }] : []),
   ];
 
   const handlePaletteSelectCreator = (id: string) => {
@@ -911,6 +1020,14 @@ export function LibraryView() {
     <SettingsProvider initial={initialSettings}>
       <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
         <PerfHudGate />
+        {/* Inside SettingsProvider so these read the live language, unlike the
+            notification text raised above, which is fixed at load time. */}
+        <ToastStack onAction={handleNotificationAction} />
+        <NotificationCenter
+          open={notificationsOpen}
+          onClose={() => setNotificationsOpen(false)}
+          onAction={handleNotificationAction}
+        />
         <CommandPalette
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
@@ -1006,6 +1123,7 @@ export function LibraryView() {
               onOpenDownloads: () => setView('downloads'),
               onOpenSearch: () => setView('search'),
               onOpenFavorites: handleSelectStarred,
+              onOpenNotifications: () => setNotificationsOpen(o => !o),
               downloadActiveCount,
               downloadStatus,
               settingsErrorCount: unseenFailures,

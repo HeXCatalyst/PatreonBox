@@ -3,7 +3,8 @@ import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Settings, DownloadCloud, Loader2, Search, Pin, GripVertical, Star } from "lucide-react";
+import { Settings, DownloadCloud, Loader2, Search, Pin, GripVertical, Star, Bell } from "lucide-react";
+import { useNotifications } from "../notifications/NotificationContext";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenDownloads: () => void;
   onOpenSearch: () => void;
+  onOpenNotifications: () => void;
   downloadActiveCount: number;
   downloadStatus: DownloadStatus;
   settingsErrorCount: number;
@@ -165,11 +167,12 @@ function CreatorItem({
 
 export function Sidebar({
   creators, selectedCreatorId, onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings,
-  onOpenDownloads, onOpenSearch, downloadActiveCount, downloadStatus, settingsErrorCount,
+  onOpenDownloads, onOpenSearch, onOpenNotifications, downloadActiveCount, downloadStatus, settingsErrorCount,
   showStarred = false, onSelectStarred, syncingSubscriptions, subscriptionSyncStatus, onSyncSubscriptions,
   demoMode = false,
 }: SidebarProps) {
   const t = useTranslation();
+  const { unreadCount } = useNotifications();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterType>('all');
 
@@ -333,6 +336,15 @@ export function Sidebar({
           {downloadActiveCount > 0 && (
             <span className="ml-auto text-xs font-semibold bg-primary text-primary-foreground rounded-full px-2 py-0.5 tabular-nums">
               {downloadActiveCount}
+            </span>
+          )}
+        </Button>
+        <Button variant="ghost" className="w-full justify-start" onClick={onOpenNotifications}>
+          <Bell className="mr-2 h-4 w-4" />
+          {t.notifications.open}
+          {unreadCount > 0 && (
+            <span className="ml-auto text-xs font-semibold bg-destructive text-white rounded-full px-2 py-0.5 tabular-nums">
+              {unreadCount}
             </span>
           )}
         </Button>

@@ -300,6 +300,7 @@ export interface Translations {
     cmdSettings: string;
     cmdBackfillComments: string;
     cmdBackfillCommentsAll: string;
+    cmdEmitDummyNotifications: string;
     cmdSearch: string;
   };
   settingsAccount: {
@@ -419,6 +420,35 @@ export interface Translations {
     description: string;
     chinese: string;
     english: string;
+  };
+  notifications: {
+    title: string;
+    open: string;
+    empty: string;
+    emptyHint: string;
+    markAllRead: string;
+    clearAll: string;
+    dismiss: string;
+    close: string;
+    repeat: (count: number) => string;
+    justNow: string;
+    minutesAgo: (n: number) => string;
+    hoursAgo: (n: number) => string;
+    daysAgo: (n: number) => string;
+    actionOpenDownloads: string;
+    actionOpenCreator: string;
+    actionOpenSettings: string;
+    actionRetry: string;
+    postSyncFailed: string;
+    postSyncPartial: (failed: number) => string;
+    postSyncDone: (count: number) => string;
+    imageDownloadFailed: string;
+    imageDownloadPartial: (failed: number) => string;
+    imageDownloadDone: (count: number) => string;
+    commentFetchFailed: string;
+    commentFetchPartial: (failed: number) => string;
+    commentFetchDone: (count: number) => string;
+    subscriptionSyncFailed: string;
   };
 }
 
@@ -720,6 +750,7 @@ const zh: Translations = {
     cmdSettings: '打开设置',
     cmdBackfillComments: '抓取当前作者的全部评论',
     cmdBackfillCommentsAll: '抓取所有帖子的评论（缺失的）',
+    cmdEmitDummyNotifications: '[开发] 触发示例通知',
     cmdSearch: '打开搜索',
   },
   settingsAccount: {
@@ -839,6 +870,35 @@ const zh: Translations = {
     description: '切换应用的界面语言',
     chinese: '中文',
     english: 'English',
+  },
+  notifications: {
+    title: '通知',
+    open: '通知',
+    empty: '暂无通知',
+    emptyHint: '同步、下载和抓取过程中的问题会出现在这里',
+    markAllRead: '全部已读',
+    clearAll: '清空',
+    dismiss: '移除',
+    close: '关闭',
+    repeat: (count: number) => `×${count}`,
+    justNow: '刚刚',
+    minutesAgo: (n: number) => `${n} 分钟前`,
+    hoursAgo: (n: number) => `${n} 小时前`,
+    daysAgo: (n: number) => `${n} 天前`,
+    actionOpenDownloads: '打开下载页',
+    actionOpenCreator: '打开创作者',
+    actionOpenSettings: '打开设置',
+    actionRetry: '重试',
+    postSyncFailed: '帖子同步失败',
+    postSyncPartial: (failed: number) => `${failed} 个帖子同步失败`,
+    postSyncDone: (count: number) => `同步完成 · ${count} 个帖子`,
+    imageDownloadFailed: '图片下载失败',
+    imageDownloadPartial: (failed: number) => `${failed} 张图片下载失败`,
+    imageDownloadDone: (count: number) => `下载完成 · ${count} 个文件`,
+    commentFetchFailed: '评论抓取失败',
+    commentFetchPartial: (failed: number) => `${failed} 个帖子的评论抓取失败`,
+    commentFetchDone: (count: number) => `评论抓取完成 · ${count} 个帖子`,
+    subscriptionSyncFailed: '订阅同步失败',
   },
 };
 
@@ -1140,6 +1200,7 @@ const en: Translations = {
     cmdSettings: 'Open Settings',
     cmdBackfillComments: 'Fetch all comments for this creator',
     cmdBackfillCommentsAll: 'Fetch comments for all posts (missing only)',
+    cmdEmitDummyNotifications: '[dev] Emit sample notifications',
     cmdSearch: 'Open Search',
   },
   settingsAccount: {
@@ -1259,6 +1320,38 @@ const en: Translations = {
     description: "Switch the app's display language",
     chinese: '中文',
     english: 'English',
+  },
+  notifications: {
+    title: 'Notifications',
+    open: 'Notifications',
+    empty: 'No notifications',
+    emptyHint: 'Problems during syncing, downloading, and scraping show up here',
+    markAllRead: 'Mark all read',
+    clearAll: 'Clear',
+    dismiss: 'Remove',
+    close: 'Close',
+    repeat: (count: number) => `×${count}`,
+    justNow: 'just now',
+    minutesAgo: (n: number) => `${n}m ago`,
+    hoursAgo: (n: number) => `${n}h ago`,
+    daysAgo: (n: number) => `${n}d ago`,
+    actionOpenDownloads: 'Open downloads',
+    actionOpenCreator: 'Open creator',
+    actionOpenSettings: 'Open settings',
+    actionRetry: 'Retry',
+    postSyncFailed: 'Post sync failed',
+    postSyncPartial: (failed: number) =>
+      `${failed} post${failed === 1 ? '' : 's'} failed to sync`,
+    postSyncDone: (count: number) => `Sync complete · ${count} posts`,
+    imageDownloadFailed: 'Image download failed',
+    imageDownloadPartial: (failed: number) =>
+      `${failed} image${failed === 1 ? '' : 's'} failed to download`,
+    imageDownloadDone: (count: number) => `Download complete · ${count} files`,
+    commentFetchFailed: 'Comment fetch failed',
+    commentFetchPartial: (failed: number) =>
+      `Comments failed for ${failed} post${failed === 1 ? '' : 's'}`,
+    commentFetchDone: (count: number) => `Comments fetched · ${count} posts`,
+    subscriptionSyncFailed: 'Subscription sync failed',
   },
 };
 

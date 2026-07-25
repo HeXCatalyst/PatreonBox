@@ -27,6 +27,7 @@ interface WorkbenchViewProps {
   onOpenFavorites: () => void;
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
+  onOpenNotifications: () => void;
   onSyncSubscriptions: () => void;
   syncingSubscriptions: boolean;
   downloadStatus: DownloadStatus;
@@ -66,7 +67,7 @@ interface WorkbenchViewProps {
 export function WorkbenchView({
   creators, selectedCreatorId, onSelectCreator,
   posts, selectedPost, selectedPostAssets, onSelectPost, onOpenPost, onToggleStar,
-  onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings,
+  onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings, onOpenNotifications,
   onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
   onSyncPosts, onSyncImages, isSyncingPosts, isSyncingImages,
@@ -191,6 +192,7 @@ export function WorkbenchView({
           onOpenFavorites={onOpenFavorites}
           onOpenDownloads={onOpenDownloads}
           onOpenSettings={onOpenSettings}
+          onOpenNotifications={onOpenNotifications}
           onOpenTimeline={() => setHome('timeline')}
           onSyncSubscriptions={onSyncSubscriptions}
           syncingSubscriptions={syncingSubscriptions}

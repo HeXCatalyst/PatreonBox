@@ -1,6 +1,7 @@
 import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Search, Settings, History, RefreshCw, Loader2, Star } from "lucide-react";
+import { Search, Settings, History, RefreshCw, Loader2, Star, Bell } from "lucide-react";
+import { useNotifications } from "../notifications/NotificationContext";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
@@ -13,6 +14,7 @@ interface IconRailProps {
   onOpenFavorites: () => void;
   onOpenDownloads: () => void;
   onOpenSettings: () => void;
+  onOpenNotifications: () => void;
   onOpenTimeline: () => void;
   onSyncSubscriptions: () => void;
   syncingSubscriptions: boolean;
@@ -29,11 +31,13 @@ interface IconRailProps {
  */
 export function IconRail({
   creators, selectedCreatorId, onSelectCreator,
-  onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings, onOpenTimeline, timelineActive,
+  onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings, onOpenNotifications,
+  onOpenTimeline, timelineActive,
   onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
 }: IconRailProps) {
   const t = useTranslation();
+  const { unreadCount } = useNotifications();
 
   const subscribed = creators.filter(c => Boolean(c.is_subscribed));
   const pinned = subscribed.filter(c => Boolean(c.is_pinned)).sort((a, b) => a.pin_order - b.pin_order);
@@ -103,6 +107,15 @@ export function IconRail({
           <DownloadStatusIcon status={downloadStatus} />
           {downloadActiveCount > 0 && (
             <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary" />
+          )}
+        </button>
+        <button onClick={onOpenNotifications} title={t.notifications.title}
+          className="relative h-9 w-9 grid place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+          <Bell className="h-4 w-4" />
+          {unreadCount > 0 && (
+            <span className="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 grid place-items-center rounded-full bg-destructive text-white text-[10px] font-semibold tabular-nums">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
           )}
         </button>
         <button onClick={onOpenSettings} title={t.sidebar.settings}
