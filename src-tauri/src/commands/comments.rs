@@ -92,13 +92,26 @@ fn parse_comment(
     Some(Row { id, parent_id, author_id, author_name, body, published_at, reply_count, is_author, author_url })
 }
 
-/// The post creator's *user* id, read from the campaign object the comments API
-/// returns in `included`. Needed because comments identify their author by user
-/// id, while `creators.external_id` locally holds the campaign id — comparing
-/// those two directly would never match.
-fn creator_user_id(json: &serde_json::Value) -> Option<String> {
+/// The post creator's *user* id, resolved from the campaign object in
+/// `included` whose id matches `campaign_id`.
+///
+/// Needed because comments identify their author by user id, while
+/// `creators.external_id` locally holds the campaign id — comparing those two
+/// directly would never match.
+///
+/// The campaign has to be matched by id rather than just taking the first one:
+/// when another creator comments on a post, Patreon includes *their* campaign
+/// too, and picking whichever came first badged them as this post's author.
+/// Returns None when the campaign isn't found (e.g. a creator row whose
+/// external_id isn't a campaign id), so nobody gets badged rather than the
+/// wrong person.
+fn creator_user_id(json: &serde_json::Value, campaign_id: Option<&str>) -> Option<String> {
+    let campaign_id = campaign_id?;
     json.get("included")?.as_array()?.iter().find_map(|item| {
         if item.get("type").and_then(|t| t.as_str()) != Some("campaign") {
+            return None;
+        }
+        if item.get("id").and_then(|i| i.as_str()) != Some(campaign_id) {
             return None;
         }
         item.get("relationships")?
@@ -108,6 +121,19 @@ fn creator_user_id(json: &serde_json::Value) -> Option<String> {
             .as_str()
             .map(|s| s.to_string())
     })
+}
+
+/// The Patreon campaign id for the creator that owns a post, as stored locally.
+fn campaign_id_for_post(conn: &rusqlite::Connection, post_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT c.external_id FROM posts p
+         JOIN creators c ON c.id = p.creator_id
+         WHERE p.id = ?1",
+        rusqlite::params![post_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
 }
 
 /// Fetch a post's comments and cache them locally. Patreon's `/api/*` endpoints
@@ -216,9 +242,11 @@ fn save_comment_pages(
     post_id: &str,
     pages: &[serde_json::Value],
 ) -> usize {
+    // Which campaign counts as "the author" for this post.
+    let campaign_id = campaign_id_for_post(conn, post_id);
     let mut rows: HashMap<String, Row> = HashMap::new();
     for json in pages {
-        let creator_uid = creator_user_id(json);
+        let creator_uid = creator_user_id(json, campaign_id.as_deref());
         let mut users: HashMap<String, UserInfo> = HashMap::new();
         if let Some(inc) = json.get("included").and_then(|v| v.as_array()) {
             for item in inc {
@@ -419,4 +447,49 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
 
     close_window(&app, "comment-scraper");
     Ok(saved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::creator_user_id;
+    use serde_json::json;
+
+    /// Two campaigns in `included` — the post's own, plus one belonging to
+    /// another creator who left a comment. Picking the first would badge the
+    /// visiting creator as this post's author.
+    fn two_campaign_page() -> serde_json::Value {
+        json!({
+            "included": [
+                { "type": "user", "id": "111", "attributes": { "full_name": "Visitor" } },
+                { "type": "campaign", "id": "VISITOR_CAMPAIGN",
+                  "relationships": { "creator": { "data": { "id": "111", "type": "user" } } } },
+                { "type": "campaign", "id": "OWN_CAMPAIGN",
+                  "relationships": { "creator": { "data": { "id": "999", "type": "user" } } } }
+            ]
+        })
+    }
+
+    #[test]
+    fn resolves_the_matching_campaigns_creator() {
+        let page = two_campaign_page();
+        assert_eq!(creator_user_id(&page, Some("OWN_CAMPAIGN")).as_deref(), Some("999"));
+        // ...and not merely whichever campaign happened to come first.
+        assert_eq!(creator_user_id(&page, Some("VISITOR_CAMPAIGN")).as_deref(), Some("111"));
+    }
+
+    #[test]
+    fn no_match_badges_nobody() {
+        // An unknown campaign id (or a creator row whose external_id isn't one)
+        // must yield None, so no commenter is wrongly marked as the author.
+        let page = two_campaign_page();
+        assert_eq!(creator_user_id(&page, Some("SOMETHING_ELSE")), None);
+        assert_eq!(creator_user_id(&page, None), None);
+    }
+
+    #[test]
+    fn handles_pages_without_campaigns() {
+        let page = json!({ "included": [ { "type": "user", "id": "1" } ] });
+        assert_eq!(creator_user_id(&page, Some("OWN_CAMPAIGN")), None);
+        assert_eq!(creator_user_id(&json!({}), Some("OWN_CAMPAIGN")), None);
+    }
 }
