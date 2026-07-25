@@ -55,6 +55,7 @@ secrets.json
 
 # Exception: README screenshots (demo-mode captures, not user data)
 !screenshots/*.png
+!screenshots/*.jpg
 
 .temp.md
 .claude/
