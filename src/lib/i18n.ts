@@ -300,7 +300,6 @@ export interface Translations {
     cmdSettings: string;
     cmdBackfillComments: string;
     cmdBackfillCommentsAll: string;
-    cmdEmitDummyNotifications: string;
     cmdSearch: string;
   };
   settingsAccount: {
@@ -414,6 +413,8 @@ export interface Translations {
     debugModeInherit: string;
     debugModeNone: string;
     demoMode: string;
+    sampleNotifications: string;
+    sampleNotificationsButton: string;
   };
   settingsLanguage: {
     heading: string;
@@ -750,7 +751,6 @@ const zh: Translations = {
     cmdSettings: '打开设置',
     cmdBackfillComments: '抓取当前作者的全部评论',
     cmdBackfillCommentsAll: '抓取所有帖子的评论（缺失的）',
-    cmdEmitDummyNotifications: '[开发] 触发示例通知',
     cmdSearch: '打开搜索',
   },
   settingsAccount: {
@@ -864,6 +864,8 @@ const zh: Translations = {
     debugModeInherit: '当前终端',
     debugModeNone: '无输出',
     demoMode: '演示模式',
+    sampleNotifications: '示例通知',
+    sampleNotificationsButton: '触发',
   },
   settingsLanguage: {
     heading: '语言',
@@ -1200,7 +1202,6 @@ const en: Translations = {
     cmdSettings: 'Open Settings',
     cmdBackfillComments: 'Fetch all comments for this creator',
     cmdBackfillCommentsAll: 'Fetch comments for all posts (missing only)',
-    cmdEmitDummyNotifications: '[dev] Emit sample notifications',
     cmdSearch: 'Open Search',
   },
   settingsAccount: {
@@ -1314,6 +1315,8 @@ const en: Translations = {
     debugModeInherit: 'Current Terminal',
     debugModeNone: 'No Output',
     demoMode: 'Demo Mode',
+    sampleNotifications: 'Sample notifications',
+    sampleNotificationsButton: 'Emit',
   },
   settingsLanguage: {
     heading: 'Language',

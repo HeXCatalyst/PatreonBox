@@ -36,7 +36,6 @@ import { useNotify } from "../notifications/NotificationContext";
 import { ToastStack } from "../notifications/ToastStack";
 import { NotificationCenter } from "../notifications/NotificationCenter";
 import type { NotifyAction } from "../notifications/store";
-import { emitDummyNotifications } from "../notifications/dummyNotifications";
 import { ResizeDivider } from "./ResizeDivider";
 import type { DatePreset } from "./FilterPanel";
 
@@ -991,14 +990,6 @@ export function LibraryView() {
       label: t.commandPalette.cmdBackfillCommentsAll,
       run: () => { void backfillAllComments(); },
     },
-    // Developer mode only: fires the same shapes the batch tasks emit, so the
-    // toast stack, coalescing and centre can be eyeballed without waiting for a
-    // real sync to fail. The automated coverage lives in store.test.ts.
-    ...(initialSettings.developer_mode_enabled ? [{
-      id: 'emit-dummy-notifications',
-      label: t.commandPalette.cmdEmitDummyNotifications,
-      run: () => emitDummyNotifications(notify, t),
-    }] : []),
   ];
 
   const handlePaletteSelectCreator = (id: string) => {

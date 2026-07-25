@@ -4,10 +4,13 @@ import { useTranslation } from "../../../lib/i18n";
 import { useSettings } from "../SettingsContext";
 import { Switch } from "@/components/ui/switch";
 import { SelfCheckPanel } from "./SelfCheckPanel";
+import { useNotify } from "../../notifications/NotificationContext";
+import { emitDummyNotifications } from "../../notifications/dummyNotifications";
 
 export function DeveloperModeSection() {
   const t = useTranslation();
   const { settings, updateSettings } = useSettings();
+  const notify = useNotify();
 
   const handleDemoModeChange = async (checked: boolean) => {
     await updateSettings({ demo_mode: checked });
@@ -56,6 +59,19 @@ export function DeveloperModeSection() {
             checked={settings.perf_hud_enabled}
             onCheckedChange={(c) => updateSettings({ perf_hud_enabled: c })}
           />
+        </div>
+        {/* Fires the shapes the batch tasks emit so the toast stack, the
+            coalescing counter and the centre can be checked by eye. Lives here
+            rather than in ⌘K because this section reads settings live, so it
+            appears the moment developer mode is switched on. */}
+        <div className="flex justify-between items-center py-3 text-sm">
+          <span className="text-muted-foreground">{t.settingsAbout.sampleNotifications}</span>
+          <button
+            onClick={() => emitDummyNotifications(notify, t)}
+            className="px-3 py-1.5 text-xs rounded border bg-background border-border text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {t.settingsAbout.sampleNotificationsButton}
+          </button>
         </div>
         <SelfCheckPanel />
       </div>
