@@ -78,6 +78,10 @@ export interface Comment {
   published_at: string | null;
   reply_count: number;
   fetched_at: string | null;
+  /** 1 when the comment was written by the post's creator. */
+  is_author: number;
+  /** The commenter's public Patreon profile, when the API supplied one. */
+  author_url: string | null;
 }
 
 export interface SyncRun {

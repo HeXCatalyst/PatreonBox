@@ -8,6 +8,8 @@ import {
   getPostAssets,
   toggleStarPost,
   getDistinctTiersForCreator,
+  getPostIdsForComments,
+  getAllPostIdsMissingComments,
 } from "../../lib/db";
 import type { Creator, Post, Asset, SyncCheckpoint } from "../../types/db";
 import { Sidebar } from "./Sidebar";
@@ -365,6 +367,8 @@ export function LibraryView() {
   const [syncingPosts, setSyncingPosts] = useState(false);
   const [syncingCreatorId, setSyncingCreatorId] = useState<string | null>(null);
   const [syncingSubscriptions, setSyncingSubscriptions] = useState(false);
+  // Comment backfill progress: null when idle, else {done,total} for the banner.
+  const [commentProgress, setCommentProgress] = useState<{ done: number; total: number } | null>(null);
   const [demoMode, setDemoMode] = useState(false);
   const [migratingImages, setMigratingImages] = useState(false);
   const [subscriptionSyncStatus, setSubscriptionSyncStatus] = useState<string>("");
@@ -456,6 +460,9 @@ export function LibraryView() {
     "image-download-progress": (payload: { current: number; total: number; creator_id: string }) => {
       setImageProgress(payload.current);
       if (payload.total > 0) setImageTotal(payload.total);
+    },
+    "comment-backfill-progress": (payload: { done: number; total: number }) => {
+      setCommentProgress({ done: payload.done, total: payload.total });
     },
     "image-migration-active": (active: boolean) => {
       setMigratingImages(active);
@@ -602,6 +609,52 @@ export function LibraryView() {
   // state. A fresh sync also forwards the incremental toggle, which resume
   // deliberately doesn't — resuming continues an existing crawl, where flipping
   // incremental mid-stream has no meaning.
+  /**
+   * Fetch comments for a creator's posts in one batched pass.
+   *
+   * `onlyMissing` is what a post-sync uses: it skips posts already cached, so
+   * the cost is proportional to what the sync actually brought in rather than
+   * to the whole archive. Passing false re-fetches everything, which is what the
+   * manual "backfill all" action wants.
+   *
+   * Best-effort — a comment failure must not fail the sync that triggered it.
+   */
+  const backfillComments = async (creatorId: string, onlyMissing: boolean) => {
+    if (demoMode) return;
+    try {
+      const ids = await getPostIdsForComments(creatorId, onlyMissing);
+      if (ids.length === 0) return;
+      setCommentProgress({ done: 0, total: ids.length });
+      await invoke<number>('fetch_comments_for_posts', { postIds: ids });
+    } catch (e) {
+      console.error('Comment backfill failed:', e);
+    } finally {
+      setCommentProgress(null);
+    }
+  };
+
+  /**
+   * One-off backfill across every creator, for posts with no cached comments.
+   * Kept as an explicit command rather than something a sync triggers: with a
+   * few thousand posts this runs for tens of minutes and keeps hitting Patreon,
+   * so it should be a deliberate choice.
+   */
+  const backfillAllComments = async () => {
+    if (demoMode) return;
+    try {
+      const ids = await getAllPostIdsMissingComments();
+      if (ids.length === 0) return;
+      setCommentProgress({ done: 0, total: ids.length });
+      await invoke<number>('fetch_comments_for_posts', { postIds: ids });
+    } catch (e) {
+      console.error('Comment backfill failed:', e);
+    } finally {
+      setCommentProgress(null);
+      // Reflect newly-cached comments in whatever post is open.
+      if (selectedPost) loadAssets(selectedPost.id);
+    }
+  };
+
   const runSyncPosts = async (checkpoint: SyncCheckpoint | null) => {
     if (demoMode || !selectedCreatorId || syncingPosts) return;
     const creator = creators.find(c => c.id === selectedCreatorId);
@@ -623,6 +676,10 @@ export function LibraryView() {
       });
       await loadPosts();
       await loadCreators();
+      // Pull comments for the posts this sync brought in. Only the ones with no
+      // cached comments, so a repeat sync doesn't refetch the whole archive; the
+      // comments panel's Refresh button still forces a single post.
+      await backfillComments(creator.id, true);
       // Full mode: always auto-trigger images after sync batch completes.
       // Don't gate on checkpoint: with small maxPosts a checkpoint always exists, but
       // user still expects the current batch's images to download automatically.
@@ -821,6 +878,18 @@ export function LibraryView() {
     { id: 'search', label: t.commandPalette.cmdSearch, run: () => setView('search') },
     { id: 'downloads', label: t.commandPalette.cmdDownloads, run: () => setView('downloads') },
     { id: 'settings', label: t.commandPalette.cmdSettings, run: handleOpenSettings },
+    // Re-fetch comments for every post of the current creator, including ones
+    // already cached — for picking up replies posted since the last sync.
+    ...(selectedCreatorId ? [{
+      id: 'backfill-comments',
+      label: t.commandPalette.cmdBackfillComments,
+      run: () => { void backfillComments(selectedCreatorId, false); },
+    }] : []),
+    {
+      id: 'backfill-comments-all',
+      label: t.commandPalette.cmdBackfillCommentsAll,
+      run: () => { void backfillAllComments(); },
+    },
   ];
 
   const handlePaletteSelectCreator = (id: string) => {
@@ -850,6 +919,11 @@ export function LibraryView() {
           onSelectCreator={handlePaletteSelectCreator}
           onOpenPost={handleOpenSearchResult}
         />
+        {commentProgress && (
+          <div className="w-full bg-secondary text-secondary-foreground text-xs text-center py-1 flex-shrink-0 tabular-nums">
+            {t.comments.backfillProgress(commentProgress.done, commentProgress.total)}
+          </div>
+        )}
         {syncingSubscriptions && (
           <div className="w-full bg-blue-600 text-white text-sm text-center py-1.5 flex-shrink-0">
             {t.sidebar.syncBannerWarning}

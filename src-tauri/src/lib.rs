@@ -158,6 +158,26 @@ pub fn run() {
                   CREATE INDEX IF NOT EXISTS idx_assets_post ON assets(post_id);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // Marks a comment written by the post's creator, so the UI can badge
+            // it the way Patreon's own site does. Derived at fetch time from the
+            // campaign's `creator` relationship, which the comments API already
+            // returns in `included` — creators.external_id can't be used for
+            // this, as that's a campaign id while comment author_id is a user id.
+            version: 12,
+            description: "add_is_author_to_comments",
+            sql: "ALTER TABLE comments ADD COLUMN is_author INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            // The commenter's public profile URL, so their name can link out.
+            // Taken from the user object's `url` attribute rather than the
+            // relationship's `links.related`, which points at the API endpoint.
+            version: 13,
+            description: "add_author_url_to_comments",
+            sql: "ALTER TABLE comments ADD COLUMN author_url TEXT;",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -212,6 +232,7 @@ pub fn run() {
         .manage(commands::ScrapedPostsRawState(std::sync::Mutex::new(None)))
         .manage(commands::ScrapeProgressTick(std::sync::atomic::AtomicU64::new(0)))
         .manage(commands::comments::PostCommentsRawState(std::sync::Mutex::new(None)))
+        .manage(commands::comments::BulkCommentsState::default())
         .manage(commands::perf::SysState(std::sync::Mutex::new(sysinfo::System::new())))
         .manage(commands::ImageDownloadCancelFlag(
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
@@ -271,6 +292,8 @@ pub fn run() {
             commands::sync_history::clear_sync_runs,
             commands::comments::fetch_post_comments,
             commands::comments::report_post_comments,
+            commands::comments::report_bulk_comments,
+            commands::comments::fetch_comments_for_posts,
             commands::perf::process_stats,
             commands::perf::disk_io_stats,
             commands::sync_history::get_unseen_failed_count,

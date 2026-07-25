@@ -130,11 +130,14 @@ export interface Translations {
   comments: {
     heading: (n: number) => string;
     refresh: string;
+    backfillProgress: (done: number, total: number) => string;
     loading: string;
     empty: string;
     notLoaded: string;
     error: string;
     unknownAuthor: string;
+    authorBadge: string;
+    openProfile: string;
   };
   favorites: {
     title: string;
@@ -295,6 +298,8 @@ export interface Translations {
     cmdSyncAll: string;
     cmdDownloads: string;
     cmdSettings: string;
+    cmdBackfillComments: string;
+    cmdBackfillCommentsAll: string;
     cmdSearch: string;
   };
   settingsAccount: {
@@ -545,11 +550,14 @@ const zh: Translations = {
   comments: {
     heading: (n) => `评论 (${n})`,
     refresh: '刷新',
+    backfillProgress: (done, total) => `正在抓取评论 ${done}/${total}`,
     loading: '加载评论中…',
     empty: '暂无评论',
     notLoaded: '点击刷新加载评论',
     error: '评论加载失败',
     unknownAuthor: '匿名',
+    authorBadge: '作者',
+    openProfile: '打开 Patreon 主页',
   },
   favorites: {
     title: '收藏',
@@ -710,6 +718,8 @@ const zh: Translations = {
     cmdSyncAll: '同步所有订阅',
     cmdDownloads: '打开下载',
     cmdSettings: '打开设置',
+    cmdBackfillComments: '抓取当前作者的全部评论',
+    cmdBackfillCommentsAll: '抓取所有帖子的评论（缺失的）',
     cmdSearch: '打开搜索',
   },
   settingsAccount: {
@@ -960,11 +970,14 @@ const en: Translations = {
   comments: {
     heading: (n) => `Comments (${n})`,
     refresh: 'Refresh',
+    backfillProgress: (done, total) => `Fetching comments ${done}/${total}`,
     loading: 'Loading comments…',
     empty: 'No comments yet',
     notLoaded: 'Click Refresh to load comments',
     error: 'Failed to load comments',
     unknownAuthor: 'Anonymous',
+    authorBadge: 'Author',
+    openProfile: 'Open Patreon profile',
   },
   favorites: {
     title: 'Favorites',
@@ -1125,6 +1138,8 @@ const en: Translations = {
     cmdSyncAll: 'Sync all subscriptions',
     cmdDownloads: 'Open Downloads',
     cmdSettings: 'Open Settings',
+    cmdBackfillComments: 'Fetch all comments for this creator',
+    cmdBackfillCommentsAll: 'Fetch comments for all posts (missing only)',
     cmdSearch: 'Open Search',
   },
   settingsAccount: {

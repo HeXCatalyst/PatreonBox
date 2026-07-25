@@ -215,6 +215,44 @@ export async function getCreatorMedia(
 }
 
 /** Cached comments for a post, oldest first (replies resolved by parent_id). */
+/**
+ * Post ids for a creator, for the comment backfill. `onlyMissing` skips posts
+ * that already have cached comments — the normal case after a sync, where only
+ * the newly-imported posts need fetching. Newest first, so if a long backfill is
+ * interrupted the posts most likely to be read are already done.
+ */
+export async function getPostIdsForComments(
+  creatorId: string,
+  onlyMissing = true,
+): Promise<string[]> {
+  const db = await getDb();
+  const missingClause = onlyMissing
+    ? 'AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)'
+    : '';
+  const rows = await db.select<{ id: string }[]>(
+    `SELECT p.id FROM posts p
+     WHERE p.creator_id = ? ${missingClause}
+     ORDER BY COALESCE(p.published_at, p.created_at) DESC`,
+    [creatorId],
+  );
+  return rows.map(r => r.id);
+}
+
+/**
+ * Post ids across every creator that still have no cached comments. Powers the
+ * one-off "backfill everything" action; newest first so an interrupted run has
+ * already covered the posts most likely to be opened.
+ */
+export async function getAllPostIdsMissingComments(): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.select<{ id: string }[]>(
+    `SELECT p.id FROM posts p
+     WHERE NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)
+     ORDER BY COALESCE(p.published_at, p.created_at) DESC`,
+  );
+  return rows.map(r => r.id);
+}
+
 export async function getPostComments(postId: string): Promise<Comment[]> {
   const db = await getDb();
   return db.select<Comment[]>(

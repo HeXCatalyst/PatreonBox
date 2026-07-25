@@ -59,8 +59,12 @@ export function PostComments({ postId }: PostCommentsProps) {
   const { topLevel, repliesByParent } = useMemo(() => {
     const top: Comment[] = [];
     const byParent = new Map<string, Comment[]>();
+    const ids = new Set(comments.map(c => c.id));
     for (const c of comments) {
-      if (c.parent_id) {
+      // A reply whose parent isn't in this set — deleted, or on a page we didn't
+      // fetch — would be nested under an id nothing renders, so it'd vanish
+      // entirely. Promote those to top level instead of dropping them.
+      if (c.parent_id && ids.has(c.parent_id)) {
         const arr = byParent.get(c.parent_id) ?? [];
         arr.push(c);
         byParent.set(c.parent_id, arr);
@@ -80,7 +84,27 @@ export function PostComments({ postId }: PostCommentsProps) {
   const renderComment = (c: Comment, isReply = false) => (
     <div key={c.id} className={isReply ? "mt-3 pl-4 border-l-2 border-border/60" : "py-3 border-t first:border-t-0"}>
       <div className="flex items-baseline gap-2 mb-1">
-        <span className="text-sm font-medium">{c.author_name || t.comments.unknownAuthor}</span>
+        {/* Linked only when the API gave us a profile URL; otherwise plain text,
+            so a missing link never renders as a dead anchor. */}
+        {c.author_url ? (
+          <a
+            href={c.author_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-sm font-medium hover:text-primary hover:underline transition-colors"
+            title={t.comments.openProfile}
+          >
+            {c.author_name || t.comments.unknownAuthor}
+          </a>
+        ) : (
+          <span className="text-sm font-medium">{c.author_name || t.comments.unknownAuthor}</span>
+        )}
+        {/* The creator's own replies are the ones worth spotting in a long thread. */}
+        {c.is_author === 1 && (
+          <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium">
+            {t.comments.authorBadge}
+          </span>
+        )}
         <span className="text-xs text-muted-foreground tabular-nums">{fmtDate(c.published_at)}</span>
       </div>
       <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words">{c.body}</div>
