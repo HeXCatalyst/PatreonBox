@@ -4,8 +4,6 @@
 
 A local-first desktop app for archiving, browsing, and reading your [Patreon](https://www.patreon.com) content — privately, offline, forever.
 
-> ⚠️ This is an **unofficial**, open-source project for **personal use** only. It is not affiliated with or endorsed by Patreon, and is intended solely for the personal, offline archival of content you have legitimately subscribed to. See the [Disclaimer](#disclaimer) below.
-
 ![Workbench layout: icon rail, reading canvas, and filmstrip dock](screenshots/workbench.jpg)
 
 <sub>Screens throughout this README use the built-in **Demo Mode** with sample content — no real account required.</sub>
