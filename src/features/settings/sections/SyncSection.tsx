@@ -31,6 +31,19 @@ export function SyncSection() {
     if (!isNaN(val) && val >= 5) updateSettings({ download_timeout_secs: val });
   };
 
+  // Clamped to the same 1..=5 the download manager enforces, so the field can't
+  // show a value the backend won't honour. Takes effect on the next scheduling
+  // pass — the worker pool re-reads it each loop, no restart needed.
+  const commitConcurrency = (raw: string) => {
+    const val = parseInt(raw);
+    if (!isNaN(val)) updateSettings({ download_concurrency: Math.min(5, Math.max(1, val)) });
+  };
+
+  const commitRetries = (raw: string) => {
+    const val = parseInt(raw);
+    if (!isNaN(val)) updateSettings({ download_retries: Math.min(10, Math.max(0, val)) });
+  };
+
   const commitDelay = (raw: string) => {
     const val = parseInt(raw);
     if (!isNaN(val)) updateSettings({ image_download_delay_ms: Math.min(5000, Math.max(50, val)) });
@@ -84,6 +97,36 @@ export function SyncSection() {
           defaultValue={settings.download_timeout_secs}
           onBlur={e => commitTimeout(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && commitTimeout((e.target as HTMLInputElement).value)}
+          className="h-8 w-20 text-sm px-2 border rounded bg-background text-center"
+        />
+      </SettingRow>
+
+      <SettingRow
+        label={t.settingsSync.concurrencyLabel}
+        description={t.settingsSync.concurrencyDesc}
+      >
+        <input
+          type="number"
+          min={1}
+          max={5}
+          defaultValue={settings.download_concurrency}
+          onBlur={e => commitConcurrency(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commitConcurrency((e.target as HTMLInputElement).value)}
+          className="h-8 w-20 text-sm px-2 border rounded bg-background text-center"
+        />
+      </SettingRow>
+
+      <SettingRow
+        label={t.settingsSync.retriesLabel}
+        description={t.settingsSync.retriesDesc}
+      >
+        <input
+          type="number"
+          min={0}
+          max={10}
+          defaultValue={settings.download_retries}
+          onBlur={e => commitRetries(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commitRetries((e.target as HTMLInputElement).value)}
           className="h-8 w-20 text-sm px-2 border rounded bg-background text-center"
         />
       </SettingRow>

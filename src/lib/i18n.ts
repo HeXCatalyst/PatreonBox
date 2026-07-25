@@ -379,6 +379,10 @@ export interface Translations {
     modeFull: string;
     timeoutLabel: string;
     timeoutDesc: string;
+    concurrencyLabel: string;
+    concurrencyDesc: string;
+    retriesLabel: string;
+    retriesDesc: string;
     delayLabel: string;
     delayDesc: string;
     msUnit: string;
@@ -790,6 +794,10 @@ const zh: Translations = {
     modeFull: '⬇ 完整',
     timeoutLabel: '图片下载超时（秒）',
     timeoutDesc: '单张图片下载的最大等待时间，修改后下次启动 app 生效',
+    concurrencyLabel: '同时下载数',
+    concurrencyDesc: '同时下载的文件数（1–5）。调高更快，但更容易被 Patreon 限流。立即生效',
+    retriesLabel: '失败重试次数',
+    retriesDesc: '网络等临时性失败的自动重试次数。链接失效等永久性失败不会重试',
     delayLabel: '图片下载延迟',
     delayDesc: '每张图片下载后的等待时间，减少触发 CDN 限流的风险（50–5000 ms）',
     msUnit: 'ms',
@@ -1201,6 +1209,10 @@ const en: Translations = {
     modeFull: '⬇ Full',
     timeoutLabel: 'Image Download Timeout (sec)',
     timeoutDesc: 'Max wait time per image download, applied next app launch',
+    concurrencyLabel: 'Simultaneous downloads',
+    concurrencyDesc: 'How many files download at once (1–5). Higher is faster but more likely to be rate-limited by Patreon. Takes effect immediately',
+    retriesLabel: 'Retries on failure',
+    retriesDesc: 'Automatic retries for temporary failures like network errors. Permanent failures such as expired links are not retried',
     delayLabel: 'Image Download Delay',
     delayDesc: 'Wait time after each image download, reduces the risk of CDN rate-limiting (50–5000 ms)',
     msUnit: 'ms',

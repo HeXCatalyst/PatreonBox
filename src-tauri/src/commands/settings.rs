@@ -69,10 +69,16 @@ pub struct AppSettings {
     pub migration_verify_mode: String,  // "size" | "hash"
     #[serde(default)]
     pub demo_mode: bool,
+    // Parallel downloads. Clamped to 1..=5 both in the settings UI and again in
+    // the download manager, which re-reads it every scheduling pass — so a change
+    // takes effect on the running queue without a restart.
     #[serde(default = "default_download_concurrency")]
-    pub download_concurrency: u32,      // parallel downloads (capped 1..=5 in the UI)
+    pub download_concurrency: u32,
+    // Auto-retries for *transient* failures only (network blips, 5xx). Failures
+    // recorded as permanent — an expired signed CDN link, a deleted file — are
+    // never retried automatically regardless of this value.
     #[serde(default = "default_download_retries")]
-    pub download_retries: u32,          // auto-retries for transient failures
+    pub download_retries: u32,
     #[serde(default = "default_delete_mode")]
     pub delete_mode: String,            // "trash" (move to Trash) | "direct" (permanent)
     #[serde(default)]
