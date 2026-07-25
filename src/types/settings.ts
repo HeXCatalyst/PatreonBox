@@ -58,6 +58,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   download_concurrency: 3,
   download_retries: 2,
   delete_mode: 'trash',
-  layout_mode: 'classic',
-  color_theme: 'default',
+  layout_mode: 'workbench',
+  color_theme: 'nightwolf',
 };

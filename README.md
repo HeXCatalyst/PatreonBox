@@ -185,7 +185,7 @@ Open **Settings** from the bottom of the sidebar. It's organized into the follow
 | **Self-Check** | Verifies folders, database, proxy, and connectivity. |
 | **About** | App version, and (for advanced users) Developer Mode, a debug-output mode, and a Demo Mode toggle. |
 
-> **Defaults:** Developer options are off out of the box — Developer Mode is disabled, Demo Mode is off, and debug output is set to **none** (nothing is printed). Theme defaults to Dark and language to English.
+> **Defaults:** Developer options are off out of the box — Developer Mode is disabled, Demo Mode is off, and debug output is set to **none** (nothing is printed). Theme defaults to Dark with the **Nightwolf** colour theme, the layout to **Workbench**, and language to English.
 
 ![Settings — Sync preferences](screenshots/settings-sync.jpg)
 

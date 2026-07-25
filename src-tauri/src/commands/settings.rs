@@ -14,8 +14,8 @@ fn default_migration_verify_mode() -> String { "size".to_string() }
 fn default_download_concurrency() -> u32 { 3 }
 fn default_download_retries() -> u32 { 2 }
 fn default_delete_mode() -> String { "trash".to_string() }
-fn default_layout_mode() -> String { "classic".to_string() }
-fn default_color_theme() -> String { "default".to_string() }
+fn default_layout_mode() -> String { "workbench".to_string() }
+fn default_color_theme() -> String { "nightwolf".to_string() }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DownloadAssetTypes {
@@ -116,8 +116,8 @@ impl Default for AppSettings {
             download_retries: 2,
             delete_mode: "trash".to_string(),
             last_seen_sync_runs_at: String::new(),
-            layout_mode: "classic".to_string(),
-            color_theme: "default".to_string(),
+            layout_mode: "workbench".to_string(),
+            color_theme: "nightwolf".to_string(),
         }
     }
 }
