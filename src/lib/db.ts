@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql';
 import { Creator, Post, Asset, Comment, FavoriteAsset } from '../types/db';
 import { mediaKindOf, ALL_MEDIA_KINDS, type MediaKind } from './media';
+import { ensurePostsColumns } from './schemaHeal';
 
 // Re-exported so existing importers keep working; the definitions live in ./media.
 export { mediaKindOf, type MediaKind };
@@ -12,12 +13,12 @@ export async function getDb(): Promise<Database> {
     dbInstance = await Database.load('sqlite:patreonbox.db');
     await dbInstance.execute("PRAGMA foreign_keys = ON").catch(() => {});
 
-    // NOTE: schema changes belong in the versioned migrations in
-    // src-tauri/src/lib.rs — never here. A duplicate set of ALTER TABLEs used to
-    // live at this spot as a "belt and suspenders" guard, but it made the schema
-    // have two sources of truth and, worse, swallowed real failures behind a
-    // brittle `includes('duplicate column')` string check. If a column is
-    // missing, the migration is what's broken, and it should fail loudly.
+    // Schema changes belong in the versioned migrations in src-tauri/src/lib.rs.
+    // The single exception is ensurePostsColumns below: the posts.is_starred /
+    // min_cents_pledged_to_view columns were dropped from the migrations by
+    // 5fc3279 but never re-added, while code still references them, and SQLite
+    // has no ADD COLUMN IF NOT EXISTS — so a migration can't add them without
+    // breaking legacy databases. See ensurePostsColumns for the full reasoning.
 
     // Self-healing cleanup: merge creator rows that point at the same Patreon
     // creator. Patreon exposes one creator under several URL forms — /slug,
@@ -60,6 +61,11 @@ export async function getDb(): Promise<Database> {
         await dbInstance.execute("UPDATE creators SET profile_url = ? WHERE id = ?", [canonical, keep.id]);
       }
     }
+
+    // Heal the posts.is_starred / min_cents_pledged_to_view drift. Runs after
+    // Database.load, so migrations v1–v13 have already applied; idempotent on
+    // legacy databases that already carry the columns. See ensurePostsColumns.
+    await ensurePostsColumns(dbInstance);
   }
   return dbInstance;
 }
