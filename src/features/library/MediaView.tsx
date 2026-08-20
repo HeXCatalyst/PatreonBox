@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import { Image as ImageIcon, Download, ArrowDownWideNarrow, ArrowUpWideNarrow, FileText, CheckSquare, Trash2, X, Check, CalendarClock, Star, Play, Music } from "lucide-react";
 import { Asset } from "../../types/db";
@@ -46,6 +46,56 @@ function loadDemoMedia(creatorId: string, order: Order): Asset[] {
     .flatMap(p => getDemoAssets(p.id)
       .filter(a => a.downloaded_at !== null && isImageFile(a.file_name))
       .map(a => ({ ...a, published_at: p.published_at })));
+}
+
+/** 网格 cell 图像，带懒生成缩略图。缩略图加载失败时，调用 ensure_thumbnail
+ *  （缺失则生成文件）然后重试一次。二次失败回退到 high-res 原图，确保网格
+ *  永不显示破图。 */
+function ThumbImg({
+  src, fallbackSrc, localPath, alt, isSelected, loadedRef, assetId, onOpen,
+}: {
+  src: string;
+  fallbackSrc?: string;
+  localPath: string;
+  alt: string;
+  isSelected: boolean;
+  loadedRef: MutableRefObject<Set<string>>;
+  assetId: string;
+  onOpen: () => void;
+}) {
+  const [currentSrc, setCurrentSrc] = useState(src);
+  const retriedRef = useRef(false);
+
+  const handleError = async () => {
+    if (!retriedRef.current) {
+      retriedRef.current = true;
+      try {
+        // 缺失则生成；忽略返回值（文件现已有或仍无）
+        await invoke("ensure_thumbnail", { localPath });
+        // 加 cache-buster 破 webview 缓存，重试失败 URL
+        setCurrentSrc(`${src}${src.includes("?") ? "&" : "?"}v=${Date.now()}`);
+      } catch {
+        // 生成失败——回退原图
+        if (fallbackSrc) setCurrentSrc(fallbackSrc);
+      }
+    } else if (fallbackSrc && currentSrc !== fallbackSrc) {
+      // 二次失败（重试的缩略图也 404）——用原图
+      setCurrentSrc(fallbackSrc);
+    }
+  };
+
+  return (
+    <img
+      src={currentSrc}
+      alt={alt}
+      className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
+      decoding="async"
+      draggable={false}
+      onLoad={() => loadedRef.current.add(assetId)}
+      onError={handleError}
+      onClick={onOpen}
+    />
+  );
 }
 
 export function MediaView({ creatorId, creatorName, order, onOrderChange, onShowPosts, demoMode, embedded, controlsSlot }: MediaViewProps) {
@@ -201,7 +251,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     if (fastTimerRef.current != null) window.clearTimeout(fastTimerRef.current);
   }, []);
 
-  const getUrl = useCallback((asset: Asset) => assetUrl(imagesDir, asset), [imagesDir]);
+  const getUrl = useCallback((asset: Asset) => assetUrl(imagesDir, asset, "thumb"), [imagesDir]);
 
   const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
@@ -399,14 +449,15 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                         // ones stay shown so they never flicker during a fling.
                         <div className="w-full h-full rounded bg-muted/40" />
                       ) : (
-                        <img
+                        <ThumbImg
                           src={url}
+                          fallbackSrc={assetUrl(imagesDir, asset, "high") ?? undefined}
+                          localPath={asset.local_path}
                           alt={asset.file_name}
-                          className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
-                          decoding="async"
-                          draggable={false}
-                          onLoad={() => loadedRef.current.add(asset.id)}
-                          onClick={() => { if (!selectMode) setLightboxIndex(realIdx); }}
+                          isSelected={isSelected}
+                          loadedRef={loadedRef}
+                          assetId={asset.id}
+                          onOpen={() => { if (!selectMode) setLightboxIndex(realIdx); }}
                         />
                       );
                     })()}
