@@ -171,6 +171,20 @@ pub fn delete_downloaded_assets(app: AppHandle, asset_ids: Vec<String>) -> Resul
                     }
                 }
             }
+            // 同时删缩略图（若存在），不留孤儿
+            if super::thumbnails::is_image_filename(&lp.clone().rsplit('/').next().unwrap_or("")) {
+                if let Ok(images_root) = images_dir(&app) {
+                    if let Some(thumb) = super::thumbnails::thumb_path(&images_root, &lp) {
+                        if thumb.exists() {
+                            if to_trash {
+                                if trash::delete(&thumb).is_err() { let _ = fs::remove_file(&thumb); }
+                            } else {
+                                let _ = fs::remove_file(&thumb);
+                            }
+                        }
+                    }
+                }
+            }
         }
         let _ = conn.execute(
             "UPDATE assets SET downloaded_at = NULL, byte_size = NULL, download_error = NULL WHERE id = ?1",
