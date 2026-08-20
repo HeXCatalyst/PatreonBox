@@ -178,6 +178,35 @@ pub fn run() {
             sql: "ALTER TABLE comments ADD COLUMN author_url TEXT;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // Persistent log of every image-directory migration: when it
+            // started/finished, source→target paths, file/byte counts, verify
+            // mode, and final status (success/failed/rolled_back). Lets the user
+            // audit past migrations from Settings → 迁移记录, and lets a crash
+            // mid-migration leave a trace of how far the copy got. Safe as a
+            // CREATE TABLE IF NOT EXISTS — no ALTER TABLE, so the "ADD COLUMN
+            // IF NOT EXISTS doesn't exist in SQLite" problem that blocked
+            // putting posts.min_cents_pledged_to_view into a real migration
+            // (see schemaHeal.ts) doesn't apply here.
+            version: 14,
+            description: "add_image_migrations_log",
+            sql: "CREATE TABLE IF NOT EXISTS image_migrations (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at   TEXT NOT NULL,
+                    finished_at  TEXT,
+                    source_dir   TEXT NOT NULL,
+                    target_dir   TEXT NOT NULL,
+                    is_restore   INTEGER NOT NULL DEFAULT 0,
+                    file_count   INTEGER,
+                    total_bytes  INTEGER,
+                    copied_bytes INTEGER,
+                    verify_mode  TEXT NOT NULL,
+                    status       TEXT NOT NULL,
+                    error        TEXT
+                  );
+                  CREATE INDEX IF NOT EXISTS idx_image_migrations_started ON image_migrations(started_at);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -225,6 +254,14 @@ pub fn run() {
                     .and_then(|s| serde_json::from_str(&s).ok())
             };
             app.manage(commands::AccountInfoState(std::sync::RwLock::new(account_info)));
+
+            // Reap any orphaned 'running' image-migration record left by a
+            // process that died mid-migration (the migration lock is process-
+            // wide, so no live migration can survive a restart). Best-effort:
+            // open_db / the UPDATE silently no-op if the table doesn't exist yet
+            // (first launch, before the SQL plugin has applied v14) — and on a
+            // fresh DB there are no orphaned records anyway.
+            commands::migration_history::cleanup_orphan_runs(app.handle());
 
             Ok(())
         })
@@ -275,6 +312,9 @@ pub fn run() {
             commands::settings::get_app_version,
             commands::settings::clear_all_data,
             commands::image_migration::migrate_images_dir,
+            commands::migration_history::get_migration_history,
+            commands::migration_history::get_last_migration,
+            commands::migration_history::clear_migration_history,
             commands::account::report_account_info,
             commands::account::get_account_info,
             commands::account::logout,

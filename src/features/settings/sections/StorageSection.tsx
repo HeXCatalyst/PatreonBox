@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { emit, listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +35,29 @@ function formatBytes(bytes: number): string {
 const FAKE_DATA_DIR = '/Users/demo/Library/Application Support/com.example.patreonbox';
 const FAKE_IMAGES_DIR = `${FAKE_DATA_DIR}/images`;
 
-export function StorageSection() {
+interface LastMigration {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  source_dir: string;
+  target_dir: string;
+  is_restore: boolean;
+  file_count: number | null;
+  total_bytes: number | null;
+  copied_bytes: number | null;
+  verify_mode: string;
+  status: string;
+  error: string | null;
+}
+
+function fmtMigrationBytes(n: number | null): string {
+  if (n == null) return "—";
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+export function StorageSection({ onNavigate }: { onNavigate?: (s: 'account' | 'sync' | 'history' | 'network' | 'storage' | 'migration' | 'appearance' | 'language' | 'about' | 'developer') => void }) {
   const t = useTranslation();
   const [dataDir, setDataDir] = useState<string>('');
   const [usage, setUsage] = useState<StorageUsage | null>(null);
@@ -52,11 +74,28 @@ export function StorageSection() {
   const [migrationCurrent, setMigrationCurrent] = useState(0);
   const [migrationTotal, setMigrationTotal] = useState(0);
   const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [lastMigration, setLastMigration] = useState<LastMigration | null>(null);
+
+  const loadLastMigration = useCallback(async () => {
+    try {
+      setLastMigration(await invoke<LastMigration | null>("get_last_migration"));
+    } catch (e) {
+      console.error("get_last_migration failed", e);
+    }
+  }, []);
 
   useEffect(() => {
     invoke<string>('resolve_app_data_dir').then(setDataDir).catch(console.error);
     invoke<StorageUsage>('get_storage_usage').then(setUsage).catch(console.error);
-  }, [cleared, migrating]);
+    loadLastMigration();
+  }, [cleared, migrating, loadLastMigration]);
+
+  // The backend emits this after record_migration_finish, so the last-migration
+  // card refreshes the instant a migration completes — no manual refresh needed.
+  useEffect(() => {
+    const unlisten = listen("image-migrations-changed", () => { loadLastMigration(); });
+    return () => { unlisten.then(f => f()); };
+  }, [loadLastMigration]);
 
   useEffect(() => {
     if (!migrating) return;
@@ -255,6 +294,47 @@ export function StorageSection() {
           ))}
         </div>
       </div>
+
+      {lastMigration && (
+        <div className="mt-6 mb-2 p-4 rounded-lg border bg-muted/30">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="text-sm font-medium">{t.settingsStorage.lastMigrationLabel}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              lastMigration.status === 'success' ? 'bg-green-500/15 text-green-500'
+              : lastMigration.status === 'failed' ? 'bg-destructive/15 text-destructive'
+              : 'bg-amber-500/15 text-amber-500'
+            }`}>
+              {lastMigration.status === 'success' ? t.migrationHistory.statusSuccess
+               : lastMigration.status === 'failed' ? t.migrationHistory.statusFailed
+               : lastMigration.status === 'rolled_back' ? t.migrationHistory.statusRolledBack
+               : t.migrationHistory.statusRunning}
+            </span>
+            <span className="text-xs text-muted-foreground ml-auto tabular-nums">
+              {new Date(lastMigration.started_at).toLocaleString()}
+            </span>
+          </div>
+          <div className="text-xs font-mono text-muted-foreground break-all">
+            {settings.demo_mode ? FAKE_IMAGES_DIR : lastMigration.source_dir}
+            <span className="mx-1">→</span>
+            {settings.demo_mode ? `${FAKE_IMAGES_DIR}-custom` : lastMigration.target_dir}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1 tabular-nums">
+            {lastMigration.file_count ?? 0} {t.settingsStorage.migrationFilesUnit}
+            {' · '}
+            {fmtMigrationBytes(lastMigration.copied_bytes)} / {fmtMigrationBytes(lastMigration.total_bytes)}
+            {' · '}
+            {lastMigration.verify_mode}
+          </div>
+          {onNavigate && (
+            <button
+              className="text-xs text-primary mt-2 hover:underline"
+              onClick={() => onNavigate('migration')}
+            >
+              {t.settingsStorage.viewAllMigrations} →
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-between py-4">
         <div>

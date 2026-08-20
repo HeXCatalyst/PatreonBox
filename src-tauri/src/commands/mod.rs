@@ -10,6 +10,7 @@ pub mod image_migration;
 pub mod self_check;
 pub mod download_manager;
 pub mod sync_history;
+pub mod migration_history;
 pub mod search;
 pub mod comments;
 pub mod perf;

@@ -192,9 +192,23 @@ pub async fn migrate_images_dir(app: AppHandle, target_dir: Option<String>) -> R
 
     let files = list_files_recursive(&source)?;
     let mut copied_bytes: u64 = 0;
+    let mut files_copied: usize = 0;
     let phase = if verify_mode == "hash" { "verifying" } else { "copying" };
 
-    for rel in &files {
+    // Record this migration attempt in the history table (best-effort — a missing
+    // record_id just means the history row couldn't be written, the migration
+    // itself proceeds regardless). Done after the lock is acquired so pre-check
+    // failures (target not empty, nested dirs, no disk space) don't litter the
+    // history with attempts that never started copying.
+    let record_id = super::migration_history::record_migration_start(
+        &app,
+        &source.to_string_lossy(),
+        &target.to_string_lossy(),
+        is_restore_to_default,
+        &verify_mode,
+    );
+
+    for (idx, rel) in files.iter().enumerate() {
         let src_path = source.join(rel);
         let dst_path = target.join(rel);
 
@@ -229,12 +243,24 @@ pub async fn migrate_images_dir(app: AppHandle, target_dir: Option<String>) -> R
         let src_len = match file_result {
             Ok(len) => len,
             Err(msg) => {
+                // Record the failure before rolling back, so the history shows
+                // how far the copy got and why it aborted.
+                super::migration_history::record_migration_finish(
+                    &app, &record_id, "failed",
+                    files_copied, total_bytes, copied_bytes, Some(&msg),
+                );
                 let _ = std::fs::remove_dir_all(&target);
                 return Err(msg);
             }
         };
 
         copied_bytes += src_len;
+        files_copied = idx + 1;
+        // Persist progress every ~50 files so a crash mid-copy leaves a record
+        // showing how far it got, without hammering the DB on every file.
+        if files_copied % 50 == 0 {
+            super::migration_history::record_migration_progress(&app, &record_id, copied_bytes);
+        }
         let _ = app.emit("image-migration-progress", serde_json::json!({
             "current_bytes": copied_bytes,
             "total_bytes": total_bytes,
@@ -242,20 +268,47 @@ pub async fn migrate_images_dir(app: AppHandle, target_dir: Option<String>) -> R
         }));
     }
 
-    // --- Success: delete originals, persist the new setting ---
-    if source.exists() {
-        std::fs::remove_dir_all(&source)
-            .map_err(|e| format!("Copy succeeded but failed to remove old files: {}", e))?;
-    }
-
+    // --- Success: persist the new setting FIRST, then delete originals ---
+    // Order matters: writing settings.json before deleting the source guarantees
+    // the app never points at a deleted directory. If the settings write fails,
+    // source is intact and settings unchanged — clean up the target copies so a
+    // retry doesn't hit "target must be empty", and return the error. If the
+    // settings write succeeds but source deletion fails, settings already
+    // points at the new (populated) directory and the leftover source is a
+    // harmless orphan — log it, don't fail the migration.
     {
         let settings_state = app.state::<super::settings::AppSettingsState>();
         let mut settings = settings_state.0.write().map_err(|e| e.to_string())?;
         settings.custom_images_dir = if is_restore_to_default { None } else { Some(target_dir.clone()) };
         let json = serde_json::to_string_pretty(&*settings).map_err(|e| e.to_string())?;
         let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
-        std::fs::write(&path, json).map_err(|e| e.to_string())?;
+        if let Err(e) = std::fs::write(&path, json) {
+            let err_msg = format!("Failed to persist new images directory: {}", e);
+            super::migration_history::record_migration_finish(
+                &app, &record_id, "failed",
+                files_copied, total_bytes, copied_bytes, Some(&err_msg),
+            );
+            // Source untouched, settings unchanged. Clean up target copies so a
+            // retry starts fresh.
+            let _ = std::fs::remove_dir_all(&target);
+            return Err(err_msg);
+        }
     }
+
+    // Settings persisted — the migration's primary goal (relocate the active
+    // images directory) is complete. Removing the old source is secondary; a
+    // failure here is logged but not surfaced as a migration failure, since
+    // settings already point at the new, populated directory.
+    if source.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&source) {
+            eprintln!("WARN: Migration succeeded but could not remove old images dir: {}", e);
+        }
+    }
+
+    super::migration_history::record_migration_finish(
+        &app, &record_id, "success",
+        files_copied, total_bytes, copied_bytes, None,
+    );
 
     let _ = app.emit("image-migration-progress", serde_json::json!({
         "current_bytes": total_bytes,
