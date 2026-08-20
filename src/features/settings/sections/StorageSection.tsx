@@ -75,6 +75,12 @@ export function StorageSection({ onNavigate }: { onNavigate?: (s: 'account' | 's
   const [migrationTotal, setMigrationTotal] = useState(0);
   const [migrationError, setMigrationError] = useState<string | null>(null);
   const [lastMigration, setLastMigration] = useState<LastMigration | null>(null);
+  // Thumbnail regeneration (manual "Regenerate thumbnails" button + the
+  // first-launch auto-backfill both emit thumbnail-backfill-progress). Mirrors
+  // the migration-progress pattern above.
+  const [thumbBackfilling, setThumbBackfilling] = useState(false);
+  const [thumbProgress, setThumbProgress] = useState<{ done: number; total: number; failed: number }>({ done: 0, total: 0, failed: 0 });
+  const [thumbDone, setThumbDone] = useState<{ failed: number } | null>(null);
 
   const loadLastMigration = useCallback(async () => {
     try {
@@ -111,6 +117,43 @@ export function StorageSection({ onNavigate }: { onNavigate?: (s: 'account' | 's
     );
     return () => { unlisten.then(f => f()); };
   }, [migrating]);
+
+  // Subscribe to thumbnail-backfill-progress for the whole lifetime of this
+  // section — the first-launch auto-backfill (fired from the Rust setup hook)
+  // can also be in flight when the user opens Settings, and we want its
+  // progress visible even though the user didn't click the button. We only
+  // flip thumbBackfilling on for runs the user actually started; the auto run
+  // still surfaces its finished summary via thumbDone.
+  useEffect(() => {
+    const unlisten = listen<{ done: number; total: number; failed: number; finished?: boolean; error?: string }>(
+      'thumbnail-backfill-progress',
+      (event) => {
+        const p = event.payload;
+        setThumbProgress({ done: p.done, total: p.total, failed: p.failed });
+        if (p.finished) {
+          setThumbBackfilling(false);
+          // On a terminal error (DB open failed, etc.) the payload carries
+          // `error` and the counts are 0 — surface as "complete" since the run
+          // did terminate; a retry will re-emit. Otherwise show failures (if
+          // any) or the all-done message.
+          setThumbDone({ failed: p.failed });
+        }
+      }
+    );
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
+  const handleRegenerateThumbs = async () => {
+    setThumbDone(null);
+    setThumbProgress({ done: 0, total: 0, failed: 0 });
+    setThumbBackfilling(true);
+    try {
+      await invoke('backfill_thumbnails');
+    } catch (e) {
+      setThumbBackfilling(false);
+      console.error('backfill_thumbnails failed', e);
+    }
+  };
 
   const handleClearAll = async () => {
     setClearing(true);
@@ -335,6 +378,41 @@ export function StorageSection({ onNavigate }: { onNavigate?: (s: 'account' | 's
           )}
         </div>
       )}
+
+      <div className="flex items-center justify-between py-4 border-b gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium">{t.thumbnails.regenerateButton}</div>
+          {thumbBackfilling && (
+            <div className="mt-2 max-w-md">
+              <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: thumbProgress.total > 0 ? `${Math.min(100, (thumbProgress.done / thumbProgress.total) * 100)}%` : '0%' }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground mt-1 tabular-nums">
+                {t.thumbnails.backfillProgress(thumbProgress.done, thumbProgress.total)}
+              </div>
+            </div>
+          )}
+          {!thumbBackfilling && thumbDone && (
+            <div className="text-xs text-muted-foreground mt-1">
+              {thumbDone.failed > 0
+                ? t.thumbnails.backfillFailed(thumbDone.failed)
+                : t.thumbnails.backfillDone}
+            </div>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={thumbBackfilling || migrating}
+          onClick={handleRegenerateThumbs}
+        >
+          {thumbBackfilling && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          {t.thumbnails.regenerateButton}
+        </Button>
+      </div>
 
       <div className="flex items-center justify-between py-4">
         <div>

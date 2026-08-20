@@ -114,6 +114,12 @@ export interface Translations {
     large: string;
     saveToDownloads: string;
   };
+  thumbnails: {
+    regenerateButton: string;
+    backfillProgress: (done: number, total: number) => string;
+    backfillDone: string;
+    backfillFailed: (failed: number) => string;
+  };
   lightbox: {
     zoomOut: string;
     resetZoom: string;
@@ -582,6 +588,12 @@ const zh: Translations = {
     large: '大',
     saveToDownloads: '保存到下载',
   },
+  thumbnails: {
+    regenerateButton: '重新生成缩略图',
+    backfillProgress: (done, total) => `正在生成缩略图…${done}/${total}`,
+    backfillDone: '缩略图生成完成',
+    backfillFailed: (failed) => `${failed} 张缩略图生成失败`,
+  },
   lightbox: {
     zoomOut: '缩小 (-)',
     resetZoom: '重置缩放 (0)',
@@ -1049,6 +1061,12 @@ const en: Translations = {
     small: 'Small',
     large: 'Large',
     saveToDownloads: 'Save to Downloads',
+  },
+  thumbnails: {
+    regenerateButton: 'Regenerate thumbnails',
+    backfillProgress: (done, total) => `Generating thumbnails…${done}/${total}`,
+    backfillDone: 'Thumbnail generation complete',
+    backfillFailed: (failed) => `${failed} thumbnail${failed === 1 ? '' : 's'} failed to generate`,
   },
   lightbox: {
     zoomOut: 'Zoom Out (-)',

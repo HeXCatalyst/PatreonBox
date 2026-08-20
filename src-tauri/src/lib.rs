@@ -244,6 +244,13 @@ pub fn run() {
                 "inherit"
             };
             apply_debug_output_mode(effective_debug_mode, &app_data_dir);
+            // Capture the flag BEFORE manage() moves settings — the one-shot
+            // auto-backfill runs on the first launch after upgrade (existing
+            // settings.json files lack this field and deserialize to false thanks
+            // to #[serde(default)]), then we mark it set immediately so a crash
+            // mid-backfill re-runs on next launch (safe — idempotent, skips
+            // existing thumbs) rather than silently skipping the work.
+            let needs_thumb_backfill = !settings.thumbs_backfilled;
             app.manage(commands::AppSettingsState(std::sync::RwLock::new(settings)));
 
             // Load persisted account info (None if file missing/corrupt = logged out)
@@ -262,6 +269,22 @@ pub fn run() {
             // (first launch, before the SQL plugin has applied v14) — and on a
             // fresh DB there are no orphaned records anyway.
             commands::migration_history::cleanup_orphan_runs(app.handle());
+
+            if needs_thumb_backfill {
+                // Mark the flag set NOW (task STARTED), not when it finishes — a
+                // crash mid-backfill re-runs on next launch, which is safe
+                // (idempotent, skips existing thumbs). Persist immediately so
+                // the flag survives even if backfill is still in flight.
+                if let Some(state) = app.try_state::<commands::AppSettingsState>() {
+                    if let Ok(mut s) = state.0.write() {
+                        s.thumbs_backfilled = true;
+                        let json = serde_json::to_string_pretty(&*s).unwrap_or_default();
+                        let path = app_data_dir.join("settings.json");
+                        let _ = std::fs::write(&path, json);
+                    }
+                }
+                let _ = commands::thumbnails::backfill_thumbnails(app.handle().clone());
+            }
 
             Ok(())
         })

@@ -87,6 +87,8 @@ pub struct AppSettings {
     pub layout_mode: String,            // "classic" (3-pane) | "workbench" (rail + canvas + dock)
     #[serde(default = "default_color_theme")]
     pub color_theme: String,            // "default" | "reading-room" | "dhole" | "nightwolf" | "azure-fox"
+    #[serde(default)]
+    pub thumbs_backfilled: bool,        // set true once backfill has auto-run on first launch after upgrade
 }
 
 impl Default for AppSettings {
@@ -118,6 +120,7 @@ impl Default for AppSettings {
             last_seen_sync_runs_at: String::new(),
             layout_mode: "workbench".to_string(),
             color_theme: "nightwolf".to_string(),
+            thumbs_backfilled: false,
         }
     }
 }
