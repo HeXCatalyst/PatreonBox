@@ -35,6 +35,38 @@ fn is_image_ext(ext: &str) -> bool {
     matches!(ext.to_ascii_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp")
 }
 
+use image::imageops::FilterType;
+use image::GenericImageView;
+
+/// 缩略图边长。单级（见 spec D2）：覆盖 80–400 CSS px 网格 cell 区间；
+/// 更大的原图在 lightbox（走 high_res 路径）里更清晰。
+const THUMB_SIZE: u32 = 512;
+
+/// 解码 `src`，居中裁切为正方形，resize 到 512×512，编码 WebP q80，写入 `dst`。
+/// 自动创建父目录。错误返回（不 panic），调用方可记日志后继续——缩略图失败
+/// 永不阻塞下载或网格（前端回退到原图）。
+pub fn generate_thumb(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    let img = image::open(src).map_err(|e| format!("decode {}: {}", src.display(), e))?;
+    let (w, h) = img.dimensions();
+    // 居中裁切到较小边（正方形 cover，对应 aspectRatio:1 + object-cover 的网格 cell）
+    let side = w.min(h);
+    let x = (w - side) / 2;
+    let y = (h - side) / 2;
+    let cropped = img.crop_imm(x, y, side, side);
+    let resized = cropped.resize_exact(THUMB_SIZE, THUMB_SIZE, FilterType::Lanczos3);
+    // 创建 thumb/ 目录，首次为新建的 creator 目录创建
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
+    }
+    // 先写临时文件再 rename，避免编码中途崩溃留下半截 .webp 被懒加载误当真缩略图
+    let tmp_dst = dst.with_extension("webp.tmp");
+    resized
+        .save_with_format(&tmp_dst, image::ImageFormat::WebP)
+        .map_err(|e| format!("encode {}: {}", tmp_dst.display(), e))?;
+    std::fs::rename(&tmp_dst, dst).map_err(|e| format!("rename: {}", e))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +128,79 @@ mod tests {
         assert!(is_image_filename("foo.bar.JPEG"));
         assert!(!is_image_filename("foo.mp4"));
         assert!(!is_image_filename("noext"));
+    }
+
+    use std::io::Write;
+    use image::{ImageBuffer, Rgba, GenericImageView};
+
+    fn make_test_png(path: &std::path::Path, w: u32, h: u32) {
+        // 纯红 255,0,0,255 图像，指定尺寸
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(w, h, |_, _| Rgba([255, 0, 0, 255]));
+        img.save(path).unwrap();
+    }
+
+    #[test]
+    fn generate_thumb_creates_512_webp() {
+        let tmp = std::env::temp_dir().join(format!("thumb_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let src = tmp.join("orig.png");
+        let dst = tmp.join("thumb").join("orig.webp"); // thumb/ 子目录还不存在
+        make_test_png(&src, 1000, 800);
+        assert!(!dst.exists());
+
+        generate_thumb(&src, &dst).expect("生成应成功");
+
+        assert!(dst.exists(), "缩略图文件应被创建");
+        // 重新解码验证是合法的 512x512 图像
+        let decoded = image::open(&dst).expect("缩略图应是合法图像");
+        assert_eq!(decoded.dimensions(), (512, 512));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn generate_thumb_is_idempotent() {
+        let tmp = std::env::temp_dir().join(format!("thumb_idem_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let src = tmp.join("orig.png");
+        let dst = tmp.join("out.webp");
+        make_test_png(&src, 600, 400);
+
+        generate_thumb(&src, &dst).unwrap();
+        let size1 = std::fs::metadata(&dst).unwrap().len();
+        generate_thumb(&src, &dst).unwrap(); // 覆盖
+        let size2 = std::fs::metadata(&dst).unwrap().len();
+        assert_eq!(size1, size2, "第二次调用产出相同字节");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn generate_thumb_center_crops_non_square() {
+        // 800x200 源 → 200x200 居中裁切 → 放大到 512x512。验证输出是正方形 512 且为合法 webp
+        let tmp = std::env::temp_dir().join(format!("thumb_crop_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let src = tmp.join("wide.png");
+        let dst = tmp.join("out.webp");
+        make_test_png(&src, 800, 200);
+
+        generate_thumb(&src, &dst).unwrap();
+        let decoded = image::open(&dst).unwrap();
+        assert_eq!(decoded.dimensions(), (512, 512));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn generate_thumb_corrupt_source_returns_err() {
+        let tmp = std::env::temp_dir().join(format!("thumb_bad_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let src = tmp.join("bad.png");
+        let dst = tmp.join("out.webp");
+        let mut f = std::fs::File::create(&src).unwrap();
+        f.write_all(b"not a png").unwrap();
+
+        let res = generate_thumb(&src, &dst);
+        assert!(res.is_err(), "损坏源必须返回错误，不能 panic");
+        assert!(!dst.exists(), "失败时无半成品输出");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
