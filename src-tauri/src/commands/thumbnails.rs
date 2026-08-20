@@ -60,10 +60,18 @@ pub fn generate_thumb(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     }
     // 先写临时文件再 rename，避免编码中途崩溃留下半截 .webp 被懒加载误当真缩略图
     let tmp_dst = dst.with_extension("webp.tmp");
-    resized
-        .save_with_format(&tmp_dst, image::ImageFormat::WebP)
+    // 用 webp crate 做有损 q80 编码。`image` 自带的 WebP 编码器仅支持无损
+    // （image-webp encoder.rs:12），无法满足 spec D1 的有损 q80 存储预期。
+    let bytes = webp::Encoder::from_image(&resized)
+        .map_err(|e| format!("encode {}: {}", tmp_dst.display(), e))?
+        .encode(80.0);
+    std::fs::write(&tmp_dst, &*bytes)
         .map_err(|e| format!("encode {}: {}", tmp_dst.display(), e))?;
-    std::fs::rename(&tmp_dst, dst).map_err(|e| format!("rename: {}", e))?;
+    // 若 rename 失败，清理 .webp.tmp 半成品，避免遗留被懒加载误当真缩略图。
+    if let Err(e) = std::fs::rename(&tmp_dst, dst) {
+        let _ = std::fs::remove_file(&tmp_dst);
+        return Err(format!("rename: {}", e));
+    }
     Ok(())
 }
 
