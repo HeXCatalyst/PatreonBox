@@ -212,3 +212,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+
+use tauri::{AppHandle, Manager};
+use super::file_ops::images_dir;
+
+/// 返回缩略图的 local_path 风格字符串（即带 `images/` 前缀，与 DB 存原图一致），
+/// 文件不存在时生成。非图像 asset 返回 `Ok(None)`——前端据此跳到原图。
+///
+/// 幂等：缩略图已存在则不做任何工作。生成失败返回 Err，前端回退原图，
+/// 而非在缺失文件上空转。
+#[tauri::command]
+pub fn ensure_thumbnail(app: AppHandle, local_path: String) -> Result<Option<String>, String> {
+    super::image_migration::check_not_migrating(&app)?;
+    // 非图像 asset 直接拒绝：视频/音频无缩略图
+    let file_name = local_path.rsplit('/').next().unwrap_or("");
+    if !is_image_filename(file_name) {
+        return Ok(None);
+    }
+    let images_root = images_dir(&app)?;
+    let thumb = thumb_path(&images_root, &local_path)
+        .ok_or_else(|| format!("无法派生缩略图路径: {}", local_path))?;
+    if !thumb.exists() {
+        // 从同一 local_path 派生原图路径
+        let rel = local_path.strip_prefix("images/").unwrap_or(&local_path);
+        let src = images_root.join(rel);
+        if !src.exists() {
+            return Err(format!("原图未找到: {}", src.display()));
+        }
+        generate_thumb(&src, &thumb)?;
+    }
+    // 返回 local_path 风格字符串，前端可直接喂给 buildAssetUrl
+    // 重建：images/{creator}/thumb/{stem}.webp
+    let rel = thumb.strip_prefix(&images_root)
+        .map_err(|e| format!("缩略图不在 images_dir 下: {}", e))?;
+    Ok(Some(format!("images/{}", rel.to_string_lossy())))
+}
