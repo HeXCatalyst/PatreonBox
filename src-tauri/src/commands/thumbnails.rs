@@ -213,7 +213,7 @@ mod tests {
     }
 }
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter};
 use super::file_ops::images_dir;
 
 /// 返回缩略图的 local_path 风格字符串（即带 `images/` 前缀，与 DB 存原图一致），
@@ -246,4 +246,73 @@ pub fn ensure_thumbnail(app: AppHandle, local_path: String) -> Result<Option<Str
     let rel = thumb.strip_prefix(&images_root)
         .map_err(|e| format!("缩略图不在 images_dir 下: {}", e))?;
     Ok(Some(format!("images/{}", rel.to_string_lossy())))
+}
+
+use super::util::open_db;
+
+/// 遍历每个已下载的图像 asset，缺失则生成缩略图。跑在后台线程（沿用
+/// image_migration 的 spawn 模式）；发送 `thumbnail-backfill-progress` 事件，
+///     带字段 `{done, total, failed}`。可重跑——已存在的缩略图跳过。失败计数并发送，
+/// 永不中止运行（单个损坏文件不应阻塞整个库的回填）。
+#[tauri::command]
+pub fn backfill_thumbnails(app: AppHandle) -> Result<(), String> {
+    super::image_migration::check_not_migrating(&app)?;
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let conn = match open_db(&app2) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("ERROR: backfill_thumbnails open_db: {}", e);
+                let _ = app2.emit("thumbnail-backfill-progress", serde_json::json!({ "done": 0, "total": 0, "failed": 0, "finished": true, "error": e }));
+                return;
+            }
+        };
+        // 先收集任务：在数千行上做文件 IO 时持有 DB 连接会阻塞其他读请求
+        let rows: Vec<(String, String)> = match conn.prepare(
+            "SELECT id, local_path FROM assets
+             WHERE downloaded_at IS NOT NULL AND media_type = 'image'"
+        ) {
+            Ok(mut stmt) => stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .ok()
+                .map(|iter| iter.filter_map(|x| x.ok()).collect())
+                .unwrap_or_default(),
+            Err(e) => {
+                eprintln!("ERROR: backfill_thumbnails query: {}", e);
+                let _ = app2.emit("thumbnail-backfill-progress", serde_json::json!({ "done": 0, "total": 0, "failed": 0, "finished": true, "error": e.to_string() }));
+                return;
+            }
+        };
+        drop(conn);
+
+        let total = rows.len();
+        let images_root = match images_dir(&app2) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("ERROR: backfill_thumbnails images_dir: {}", e);
+                return;
+            }
+        };
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for (id, local_path) in &rows {
+            if let Some(thumb) = thumb_path(&images_root, local_path) {
+                if thumb.exists() { done += 1; continue; }
+                let rel = local_path.strip_prefix("images/").unwrap_or(local_path.as_str());
+                let src = images_root.join(rel);
+                if src.exists() {
+                    if let Err(e) = generate_thumb(&src, &thumb) {
+                        eprintln!("WARN: 回填缩略图 asset {}: {}", id, e);
+                        failed += 1;
+                    }
+                }
+                // 原图缺失（DB 孤儿行）——跳过，不计为失败
+            }
+            done += 1;
+            if done % 25 == 0 {
+                let _ = app2.emit("thumbnail-backfill-progress", serde_json::json!({ "done": done, "total": total, "failed": failed }));
+            }
+        }
+        let _ = app2.emit("thumbnail-backfill-progress", serde_json::json!({ "done": done, "total": total, "failed": failed, "finished": true }));
+    });
+    Ok(())
 }

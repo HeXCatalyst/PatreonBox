@@ -329,6 +329,7 @@ pub fn run() {
             commands::download_manager::retry_all_failed,
             commands::download_manager::clear_completed_downloads,
             commands::thumbnails::ensure_thumbnail,
+            commands::thumbnails::backfill_thumbnails,
             commands::sync_history::get_sync_runs,
             commands::sync_history::clear_sync_runs,
             commands::comments::fetch_post_comments,
