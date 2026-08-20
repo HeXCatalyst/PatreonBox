@@ -82,8 +82,8 @@ mod tests {
     #[test]
     fn thumb_path_png() {
         let dir = PathBuf::from("/imgs");
-        let got = thumb_path(&dir, "images/abc/high_res/578472802_1.png");
-        assert_eq!(got, Some(PathBuf::from("/imgs/abc/thumb/578472802_1.webp")));
+        let got = thumb_path(&dir, "images/abc/high_res/sample_001.png");
+        assert_eq!(got, Some(PathBuf::from("/imgs/abc/thumb/sample_001.webp")));
     }
 
     #[test]
