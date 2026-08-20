@@ -426,8 +426,39 @@ pub async fn save_scraped_to_db(app: AppHandle) -> Result<usize, String> {
         }
     }
 
-    // Mark creators absent from this sync as unsubscribed
-    if !synced_ids.is_empty() {
+    // Mark creators absent from this sync as unsubscribed — BUT only when this
+    // scrape looks plausibly complete. The DOM/API scrape is fragile (Patreon
+    // changes /home layout, the memberships API paginates and we only see page
+    // 1), so a partial scrape returning only a few creators out of many is NOT
+    // evidence that the user cancelled the rest — it's evidence the scrape
+    // broke. Marking them all unsubscribed in that case would silently wipe the
+    // user's library, which is exactly the bug this guard prevents.
+    //
+    // Rule: only run the unsubscribe pass when the scrape confirmed at least as
+    // many creators as were already subscribed. A real cancellation still shows
+    // up as "scraped >= existing" (we saw everyone who's still subscribed), so
+    // the guard never blocks a legitimate unsubscribe — it only blocks broken
+    // scrapes.
+    let existing_subscribed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM creators WHERE source_key = 'patreon' AND is_subscribed = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let scraped_count = synced_ids.len() as i64;
+
+    if scraped_count == 0 {
+        eprintln!(
+            "DEBUG: scrape returned 0 creators — skipping unsubscribe pass (refusing to wipe all subscriptions)"
+        );
+    } else if scraped_count < existing_subscribed {
+        eprintln!(
+            "DEBUG: scrape returned {} creators but {} were already subscribed — \
+             scrape looks partial, SKIPPING unsubscribe pass to avoid wiping existing subscriptions",
+            scraped_count, existing_subscribed
+        );
+    } else if !synced_ids.is_empty() {
         let placeholders: String = synced_ids.iter().enumerate()
             .map(|(i, _)| format!("?{}", i + 1))
             .collect::<Vec<_>>()
