@@ -38,6 +38,7 @@ fastrand = "2"
 fs4 = "1"
 trash = "5"
 sysinfo = "0.32"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
 tauri-plugin-dialog = "2"
 
 [target.'cfg(unix)'.dependencies]
