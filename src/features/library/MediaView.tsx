@@ -20,6 +20,14 @@ const GAP = 4;      // grid gap in px
 const PAD = 12;     // grid padding in px
 const OVERSCAN = 6; // extra rows rendered above/below the viewport (preloads while scrolling)
 const FAST_SCROLL_PX = 70; // per-frame scroll jump above which we defer image decode
+// Idle prefetch: while the main thread is idle (not flinging), pull thumb URLs
+// just beyond the OVERSCAN window into WebKit's memory cache via a detached
+// `new Image()`. On HDD the ~12ms seek per file is the jank source; doing this
+// work in idle windows overlaps the seek with the user viewing current rows, so
+// the next scroll into that region hits memory instead of disk. Deduped + skipped
+// during fling (fastScroll===true → no idle, and would contend for the head).
+const PREFETCH_ROWS = 8;
+const PREFETCH_MAX_PER_FRAME = 4; // bound per idle tick so we reschedule & stay responsive
 
 type Order = "desc" | "asc";
 
@@ -52,7 +60,7 @@ function loadDemoMedia(creatorId: string, order: Order): Asset[] {
  *  （缺失则生成文件）然后重试一次。二次失败回退到 high-res 原图，确保网格
  *  永不显示破图。 */
 function ThumbImg({
-  src, fallbackSrc, localPath, alt, isSelected, loadedRef, assetId, onOpen,
+  src, fallbackSrc, localPath, alt, isSelected, loadedRef, assetId, onLoaded, onOpen,
 }: {
   src: string;
   fallbackSrc?: string;
@@ -61,6 +69,7 @@ function ThumbImg({
   isSelected: boolean;
   loadedRef: MutableRefObject<Set<string>>;
   assetId: string;
+  onLoaded: () => void;
   onOpen: () => void;
 }) {
   const [currentSrc, setCurrentSrc] = useState(src);
@@ -91,7 +100,7 @@ function ThumbImg({
       className={`w-full h-full object-cover rounded cursor-pointer ${isSelected ? "opacity-70" : ""}`}
       decoding="async"
       draggable={false}
-      onLoad={() => loadedRef.current.add(assetId)}
+      onLoad={() => { loadedRef.current.add(assetId); onLoaded(); }}
       onError={handleError}
       onClick={onOpen}
     />
@@ -132,6 +141,22 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const fastRef = useRef(false);
   const fastTimerRef = useRef<number | null>(null);
   const loadedRef = useRef<Set<string>>(new Set());
+
+  // Idle prefetch bookkeeping. scrollDirRef is +1 / -1, updated in the scroll
+  // handler (cheap; no extra state). prefetchedRef dedupes so each URL is
+  // fetched at most once per creator/order session.
+  const scrollDirRef = useRef<1 | -1>(1);
+  const prefetchedRef = useRef<Set<string>>(new Set());
+  const idleHandleRef = useRef<number | null>(null);
+
+  // Top-of-grid thumbnail load progress bar. Driven purely by ref + rAF-batched
+  // DOM mutation — no setState — so a hundred simultaneous decodes don't
+  // re-render this heavy grid component. `imageCellIds` lists the image assets
+  // currently in the visible window (excludes video/audio cells); `barRef` is
+  // the fill div whose width we mutate.
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const pendingProgressRafRef = useRef<number | null>(null);
+  const imageCellIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +233,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     setScrollTop(0);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     loadedRef.current.clear();
+    prefetchedRef.current.clear();
   }, [creatorId, order]);
 
   // Track the scroll container's size (responsive columns + viewport height).
@@ -231,7 +257,9 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
       const st = el.scrollTop;
-      const delta = Math.abs(st - lastScrollTopRef.current);
+      const prev = lastScrollTopRef.current;
+      const delta = Math.abs(st - prev);
+      if (st !== prev) scrollDirRef.current = st > prev ? 1 : -1;
       lastScrollTopRef.current = st;
       setScrollTop(st);
       // A large per-frame jump = a fast fling → defer image decode until it eases.
@@ -249,6 +277,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   useEffect(() => () => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     if (fastTimerRef.current != null) window.clearTimeout(fastTimerRef.current);
+    if (pendingProgressRafRef.current != null) cancelAnimationFrame(pendingProgressRafRef.current);
   }, []);
 
   const getUrl = useCallback((asset: Asset) => assetUrl(imagesDir, asset, "thumb"), [imagesDir]);
@@ -274,6 +303,106 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
   const endIdx = Math.min(media.length, endRow * cols);
   const visible = media.slice(startIdx, endIdx);
   const offsetY = PAD + startRow * rowH;
+
+  // --- Thumbnail load progress bar. Tracks only the image cells currently in
+  // the visible window (video/audio cells don't go through ThumbImg). The set
+  // is recomputed each render from `visible`; markProgress() — called by each
+  // ThumbImg onLoad — coalesces into a single rAF that mutates the bar width
+  // directly. No setState, so a burst of decodes doesn't re-render this grid.
+  const imageCellIds = visible.filter(a => mediaKindOf(a.file_name) === "image").map(a => a.id);
+  imageCellIdsRef.current = new Set(imageCellIds);
+
+  const markProgress = useCallback(() => {
+    if (pendingProgressRafRef.current != null) return; // already queued
+    pendingProgressRafRef.current = requestAnimationFrame(() => {
+      pendingProgressRafRef.current = null;
+      const bar = barRef.current;
+      if (!bar) return;
+      const total = imageCellIdsRef.current.size;
+      let loaded = 0;
+      const set = loadedRef.current;
+      imageCellIdsRef.current.forEach(id => { if (set.has(id)) loaded++; });
+      const pct = total === 0 ? 0 : (loaded / total) * 100;
+      bar.style.width = `${pct}%`;
+      bar.style.opacity = loaded >= total ? "0" : "1";
+    });
+  }, []);
+
+  // Refresh the progress bar whenever the visible window changes (scroll,
+  // resize, size slider, creator switch). onLoad fires handle per-image, but
+  // scrolling to a fresh region recomputes imageCellIds without any new onLoad
+  // firing for already-cached images — this effect covers that gap.
+  useEffect(() => { markProgress(); }, [imageCellIds, markProgress]);
+
+  // --- Idle prefetch: schedule on any geometry / fling-state change. The
+  // callback runs while idle, fetches a bounded batch of thumb URLs beyond the
+  // OVERSCAN window (in the scroll direction) via detached `new Image()`, then
+  // reschedules itself if idle time remains. Deduped by URL; no-op if flinging
+  // (no idle, and would contend for the HDD head).
+  useEffect(() => {
+    if (media.length === 0 || rowH <= 0 || cols <= 0) return;
+    if (fastScroll) return; // don't contend with active fling
+    if (!imagesDir) return; // getUrl returns null until dir resolves
+
+    let cancelled = false;
+    const scheduleIdle: () => void = () => {
+      if (cancelled) return;
+      const run = (deadline: IdleDeadline) => {
+        idleHandleRef.current = null;
+        if (cancelled || fastRef.current) return; // unmounted or fling started — bail
+        let budget = PREFETCH_MAX_PER_FRAME;
+        const dir = scrollDirRef.current;
+        // Prefetch beyond the OVERSCAN window in the scroll direction. Forward
+        // (dir=+1) is the common case; reverse still works symmetrically.
+        const baseRow = dir === 1 ? endRow : startRow;
+        for (let r = 1; r <= PREFETCH_ROWS && budget > 0; r++) {
+          const row = dir === 1 ? baseRow + r : baseRow - r;
+          if (row < 0 || row >= totalRows) break;
+          const rowStart = row * cols;
+          const rowEnd = Math.min(media.length, rowStart + cols);
+          for (let i = rowStart; i < rowEnd && budget > 0; i++) {
+            const asset = media[i];
+            if (!asset) continue;
+            const url = getUrl(asset);
+            if (!url) continue;
+            if (prefetchedRef.current.has(url)) continue;
+            prefetchedRef.current.add(url);
+            budget--;
+            const img = new Image();
+            img.src = url; // fetch into WebKit memory cache; not attached to DOM
+          }
+        }
+        // Nothing prefetched this tick → all candidates already in cache; stop.
+        if (budget === PREFETCH_MAX_PER_FRAME) return;
+        // Still idle and not flinging → chain another idle tick to continue.
+        if (deadline.timeRemaining() > 0 && !fastRef.current && !cancelled) {
+          scheduleIdle();
+        }
+      };
+      // requestIdleCallback with a 500ms timeout so a quiet scroll still warms
+      // the cache reasonably soon; falls back to setTimeout on older webviews.
+      if (typeof window.requestIdleCallback === "function") {
+        idleHandleRef.current = window.requestIdleCallback(run, { timeout: 500 });
+      } else {
+        idleHandleRef.current = window.setTimeout(() => run({
+          didTimeout: false,
+          timeRemaining: () => 5,
+        }) as unknown as void, 50) as unknown as number;
+      }
+    };
+    scheduleIdle();
+    return () => {
+      cancelled = true;
+      if (idleHandleRef.current != null) {
+        if (typeof window.cancelIdleCallback === "function") {
+          window.cancelIdleCallback(idleHandleRef.current as number);
+        } else {
+          window.clearTimeout(idleHandleRef.current);
+        }
+        idleHandleRef.current = null;
+      }
+    };
+  }, [media, cols, rowH, totalRows, startRow, endRow, fastScroll, imagesDir, getUrl]);
 
   // The media-specific controls. Rendered in this view's own header normally;
   // when embedded (Workbench), they're portaled into the shared top bar instead
@@ -372,6 +501,33 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
       </div>
         )}
 
+      {/* Thumbnail load progress: thin bar under the header. Three states:
+          - loading (DB query): indeterminate — a 1/3-width segment slides
+            left→right (reuses the existing sync-indeterminate keyframe).
+          - fastScroll (fling): same indeterminate slide — images are deferred
+            to placeholders during fling so loadedRef doesn't grow; a determinate
+            bar would sit at 0% (invisible). The sliding segment signals "loading".
+          - otherwise: determinate bar, width/opacity via ref, fills as images
+            onLoad, fades out at 100%.
+          Using translateX (not opacity pulse) for indeterminate so it never
+          visually conflicts with the determinate bar's width growth on switch. */}
+      {(loading || media.length > 0) && (
+        <div className="h-0.5 w-full bg-muted/30 overflow-hidden">
+          {loading || fastScroll ? (
+            <div
+              className="h-full w-1/3 bg-primary"
+              style={{ animation: "sync-indeterminate 1.1s ease-in-out infinite" }}
+            />
+          ) : (
+            <div
+              ref={barRef}
+              className="h-full bg-primary transition-[width,opacity] duration-150 ease-out"
+              style={{ width: "0%", opacity: 1 }}
+            />
+          )}
+        </div>
+      )}
+
       {/* Grid — virtualized: only rows near the viewport are in the DOM.
           Wrapped in a relative box so the time scrubber can overlay the strip. */}
       <div className="relative flex-1 min-h-0">
@@ -457,6 +613,7 @@ export function MediaView({ creatorId, creatorName, order, onOrderChange, onShow
                           isSelected={isSelected}
                           loadedRef={loadedRef}
                           assetId={asset.id}
+                          onLoaded={markProgress}
                           onOpen={() => { if (!selectMode) setLightboxIndex(realIdx); }}
                         />
                       );
