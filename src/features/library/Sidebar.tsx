@@ -93,7 +93,6 @@ function CreatorItem({
   onSelect,
   onTogglePin,
   onDeleteCreator,
-  filter,
   t,
 }: {
   creator: Creator & { post_count: number };
@@ -101,7 +100,6 @@ function CreatorItem({
   onSelect: (id: string) => void;
   onTogglePin: (creator: Creator & { post_count: number }) => void;
   onDeleteCreator: (creator: Creator & { post_count: number }) => void;
-  filter: FilterType;
   t: Translations;
 }) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -112,7 +110,7 @@ function CreatorItem({
         <ContextMenuTrigger>
           <Button
             variant={selected ? "secondary" : "ghost"}
-            className={`w-full justify-start h-auto py-2 px-2${selected ? " creator-row-active" : ""}`}
+            className={`w-full justify-start h-auto py-2 px-2${selected ? " creator-row-active" : ""}${!creator.is_subscribed ? " opacity-50" : ""}`}
             onClick={() => onSelect(creator.id)}
           >
             <Avatar className="h-6 w-6 mr-2 flex-shrink-0 creator-avatar">
@@ -121,7 +119,7 @@ function CreatorItem({
             </Avatar>
             <div className="flex flex-col items-start truncate overflow-hidden text-left flex-1">
               <span className="text-sm truncate w-full">{creator.name}</span>
-              {filter === 'unsubscribed' && (
+              {!creator.is_subscribed && (
                 <span className="text-xs text-muted-foreground">{t.sidebar.unsubscribedTag}</span>
               )}
             </div>
@@ -199,9 +197,13 @@ export function Sidebar({
     onCreatorsUpdated();
   };
 
+  // Unsubscribed creators must NOT vanish from the default view — they stay
+  // listed (dimmed + tagged) so a partial scrape or a real cancellation never
+  // looks like data loss. Only `free`/`paid` narrow to subscribed-of-tier;
+  // `unsubscribed` isolates just the unsubscribed ones.
   const filterCreators = (c: Creator & { post_count: number }) => {
     const subscribed = Boolean(c.is_subscribed);
-    if (filter === 'all') return subscribed;
+    if (filter === 'all') return true;
     if (filter === 'free') return subscribed && c.subscription_type === 'free';
     if (filter === 'paid') return subscribed && c.subscription_type === 'paid';
     if (filter === 'unsubscribed') return !subscribed;
@@ -318,7 +320,6 @@ export function Sidebar({
               onSelect={onSelectCreator}
               onTogglePin={handleTogglePin}
               onDeleteCreator={handleDeleteCreator}
-              filter={filter}
               t={t}
             />
           ))}

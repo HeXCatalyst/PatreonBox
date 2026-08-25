@@ -556,6 +556,36 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
                  WHERE id = ?3",
                 rusqlite::params![now, *size as i64, asset_id],
             );
+            // 主动生成缩略图：文件已落盘且 DB 标记 downloaded，现在生成缩略图。
+            // 失败非致命——懒加载 ensure_thumbnail 会在下次 MediaView 加载时重试。
+            // 跑在 blocking 线程上，因为 image::open 是同步的且可能耗时 10-50ms；
+            // 内联执行会拖住下载 worker。
+            let file_name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if super::thumbnails::is_image_filename(&file_name) {
+                let app_t = app.clone();
+                let dest_clone = dest.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let images_root = match super::file_ops::images_dir(&app_t) {
+                        Ok(p) => p,
+                        Err(e) => { eprintln!("WARN: 缩略图生成 images_dir: {}", e); return; }
+                    };
+                    // 重建 DB 存的 local_path 风格字符串。
+                    // dest 形如 images_dir/{creator}/high_res/{file}；需要
+                    // "images/{creator}/high_res/{file}" 形式给 thumb_path。
+                    let rel = match dest_clone.strip_prefix(&images_root) {
+                        Ok(r) => r.to_string_lossy().to_string(),
+                        Err(_) => return,
+                    };
+                    let local_path = format!("images/{}", rel);
+                    if let Some(thumb) = super::thumbnails::thumb_path(&images_root, &local_path) {
+                        if !thumb.exists() {
+                            if let Err(e) = super::thumbnails::generate_thumb(&dest_clone, &thumb) {
+                                eprintln!("WARN: 主动缩略图生成 {}: {}", local_path, e);
+                            }
+                        }
+                    }
+                });
+            }
         }
     }
 

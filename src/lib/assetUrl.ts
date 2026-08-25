@@ -78,9 +78,13 @@ export interface AssetUrlParts {
  * known yet. Returning null rather than an empty string is deliberate: it makes
  * the "not ready" case impossible to pass to `src=` by accident.
  */
-export function assetUrl(imagesDir: string, asset: AssetUrlParts): string | null {
+export function assetUrl(
+  imagesDir: string,
+  asset: AssetUrlParts,
+  variant?: "thumb" | "high",
+): string | null {
   if (!imagesDir) return null;
-  return buildAssetUrl(imagesDir, asset.local_path, asset.downloaded_at);
+  return buildAssetUrl(imagesDir, asset.local_path, asset.downloaded_at, variant);
 }
 
 /** Path-and-version form, for callers that don't have a whole asset row. */
@@ -88,7 +92,20 @@ export function buildAssetUrl(
   imagesDir: string,
   localPath: string,
   version?: string | null,
+  variant?: "thumb" | "high",
 ): string {
-  const base = convertFileSrc(`${imagesDir}/${localPath.replace(/^images\//, "")}`);
+  const rel = localPath.replace(/^images\//, "");
+  const finalRel = variant === "thumb" ? toThumbRel(rel) : rel;
+  const base = convertFileSrc(`${imagesDir}/${finalRel}`);
   return version ? `${base}?v=${encodeURIComponent(version)}` : base;
+}
+
+/** 把 `high_res/{file}` 换成 `thumb/{stem}.webp`。镜像后端 thumb_path。 */
+function toThumbRel(rel: string): string {
+  // rel 形如 "{creator}/high_res/{file}.{ext}"
+  const m = rel.match(/^(.+?)\/high_res\/(.+)$/);
+  if (!m) return rel; // 不是图像布局路径；原样返回（前端会 error 并回退）
+  const [, creator, file] = m;
+  const stem = file.replace(/\.[^.]+$/, "");
+  return `${creator}/thumb/${stem}.webp`;
 }

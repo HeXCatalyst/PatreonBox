@@ -178,6 +178,35 @@ pub fn run() {
             sql: "ALTER TABLE comments ADD COLUMN author_url TEXT;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // Persistent log of every image-directory migration: when it
+            // started/finished, source→target paths, file/byte counts, verify
+            // mode, and final status (success/failed/rolled_back). Lets the user
+            // audit past migrations from Settings → 迁移记录, and lets a crash
+            // mid-migration leave a trace of how far the copy got. Safe as a
+            // CREATE TABLE IF NOT EXISTS — no ALTER TABLE, so the "ADD COLUMN
+            // IF NOT EXISTS doesn't exist in SQLite" problem that blocked
+            // putting posts.min_cents_pledged_to_view into a real migration
+            // (see schemaHeal.ts) doesn't apply here.
+            version: 14,
+            description: "add_image_migrations_log",
+            sql: "CREATE TABLE IF NOT EXISTS image_migrations (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    started_at   TEXT NOT NULL,
+                    finished_at  TEXT,
+                    source_dir   TEXT NOT NULL,
+                    target_dir   TEXT NOT NULL,
+                    is_restore   INTEGER NOT NULL DEFAULT 0,
+                    file_count   INTEGER,
+                    total_bytes  INTEGER,
+                    copied_bytes INTEGER,
+                    verify_mode  TEXT NOT NULL,
+                    status       TEXT NOT NULL,
+                    error        TEXT
+                  );
+                  CREATE INDEX IF NOT EXISTS idx_image_migrations_started ON image_migrations(started_at);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -215,6 +244,13 @@ pub fn run() {
                 "inherit"
             };
             apply_debug_output_mode(effective_debug_mode, &app_data_dir);
+            // Capture the flag BEFORE manage() moves settings — the one-shot
+            // auto-backfill runs on the first launch after upgrade (existing
+            // settings.json files lack this field and deserialize to false thanks
+            // to #[serde(default)]), then we mark it set immediately so a crash
+            // mid-backfill re-runs on next launch (safe — idempotent, skips
+            // existing thumbs) rather than silently skipping the work.
+            let needs_thumb_backfill = !settings.thumbs_backfilled;
             app.manage(commands::AppSettingsState(std::sync::RwLock::new(settings)));
 
             // Load persisted account info (None if file missing/corrupt = logged out)
@@ -225,6 +261,30 @@ pub fn run() {
                     .and_then(|s| serde_json::from_str(&s).ok())
             };
             app.manage(commands::AccountInfoState(std::sync::RwLock::new(account_info)));
+
+            // Reap any orphaned 'running' image-migration record left by a
+            // process that died mid-migration (the migration lock is process-
+            // wide, so no live migration can survive a restart). Best-effort:
+            // open_db / the UPDATE silently no-op if the table doesn't exist yet
+            // (first launch, before the SQL plugin has applied v14) — and on a
+            // fresh DB there are no orphaned records anyway.
+            commands::migration_history::cleanup_orphan_runs(app.handle());
+
+            if needs_thumb_backfill {
+                // Mark the flag set NOW (task STARTED), not when it finishes — a
+                // crash mid-backfill re-runs on next launch, which is safe
+                // (idempotent, skips existing thumbs). Persist immediately so
+                // the flag survives even if backfill is still in flight.
+                if let Some(state) = app.try_state::<commands::AppSettingsState>() {
+                    if let Ok(mut s) = state.0.write() {
+                        s.thumbs_backfilled = true;
+                        let json = serde_json::to_string_pretty(&*s).unwrap_or_default();
+                        let path = app_data_dir.join("settings.json");
+                        let _ = std::fs::write(&path, json);
+                    }
+                }
+                let _ = commands::thumbnails::backfill_thumbnails(app.handle().clone());
+            }
 
             Ok(())
         })
@@ -275,6 +335,9 @@ pub fn run() {
             commands::settings::get_app_version,
             commands::settings::clear_all_data,
             commands::image_migration::migrate_images_dir,
+            commands::migration_history::get_migration_history,
+            commands::migration_history::get_last_migration,
+            commands::migration_history::clear_migration_history,
             commands::account::report_account_info,
             commands::account::get_account_info,
             commands::account::logout,
@@ -288,6 +351,8 @@ pub fn run() {
             commands::download_manager::retry_download,
             commands::download_manager::retry_all_failed,
             commands::download_manager::clear_completed_downloads,
+            commands::thumbnails::ensure_thumbnail,
+            commands::thumbnails::backfill_thumbnails,
             commands::sync_history::get_sync_runs,
             commands::sync_history::clear_sync_runs,
             commands::comments::fetch_post_comments,

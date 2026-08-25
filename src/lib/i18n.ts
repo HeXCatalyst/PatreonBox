@@ -114,6 +114,12 @@ export interface Translations {
     large: string;
     saveToDownloads: string;
   };
+  thumbnails: {
+    regenerateButton: string;
+    backfillProgress: (done: number, total: number) => string;
+    backfillDone: string;
+    backfillFailed: (failed: number) => string;
+  };
   lightbox: {
     zoomOut: string;
     resetZoom: string;
@@ -243,12 +249,26 @@ export interface Translations {
     sync: string;
     network: string;
     storage: string;
+    migration: string;
     appearance: string;
     language: string;
     about: string;
     developer: string;
     history: string;
     backToLibrary: string;
+  };
+  migrationHistory: {
+    heading: string;
+    desc: string;
+    empty: string;
+    clearButton: string;
+    statusRunning: string;
+    statusSuccess: string;
+    statusFailed: string;
+    statusRolledBack: string;
+    restoreDefault: string;
+    toCustom: string;
+    files: (n: string | number) => string;
   };
   settingsHistory: {
     heading: string;
@@ -373,6 +393,9 @@ export interface Translations {
     verifyModeLabel: string;
     verifyModeSize: string;
     verifyModeHash: string;
+    lastMigrationLabel: string;
+    migrationFilesUnit: string;
+    viewAllMigrations: string;
   };
   settingsSync: {
     heading: string;
@@ -565,6 +588,12 @@ const zh: Translations = {
     large: '大',
     saveToDownloads: '保存到下载',
   },
+  thumbnails: {
+    regenerateButton: '重新生成缩略图',
+    backfillProgress: (done, total) => `正在生成缩略图…${done}/${total}`,
+    backfillDone: '缩略图生成完成',
+    backfillFailed: (failed) => `${failed} 张缩略图生成失败`,
+  },
   lightbox: {
     zoomOut: '缩小 (-)',
     resetZoom: '重置缩放 (0)',
@@ -694,12 +723,26 @@ const zh: Translations = {
     sync: '同步偏好',
     network: '网络 / 代理',
     storage: '存储',
+    migration: '迁移记录',
     appearance: '外观',
     language: '语言(Language)',
     about: '关于',
     developer: '开发者模式',
     history: '同步历史',
     backToLibrary: '返回库',
+  },
+  migrationHistory: {
+    heading: '迁移记录',
+    desc: '每次图片目录迁移的开始时间、源/目标路径、文件数与字节数、校验方式与最终状态。失败项可展开查看错误详情。',
+    empty: '还没有迁移记录。更改图片目录或恢复默认时，迁移会记录在这里。',
+    clearButton: '清空历史',
+    statusRunning: '进行中',
+    statusSuccess: '成功',
+    statusFailed: '失败',
+    statusRolledBack: '已回滚',
+    restoreDefault: '恢复默认目录',
+    toCustom: '迁移至自定义目录',
+    files: (n) => `${n} 个文件`,
   },
   settingsHistory: {
     heading: '同步历史',
@@ -824,6 +867,9 @@ const zh: Translations = {
     verifyModeLabel: '校验模式',
     verifyModeSize: '大小对比',
     verifyModeHash: '完整 Hash 校验',
+    lastMigrationLabel: '最近一次迁移',
+    migrationFilesUnit: '个文件',
+    viewAllMigrations: '查看全部迁移记录',
   },
   settingsSync: {
     heading: '同步偏好',
@@ -1016,6 +1062,12 @@ const en: Translations = {
     large: 'Large',
     saveToDownloads: 'Save to Downloads',
   },
+  thumbnails: {
+    regenerateButton: 'Regenerate thumbnails',
+    backfillProgress: (done, total) => `Generating thumbnails…${done}/${total}`,
+    backfillDone: 'Thumbnail generation complete',
+    backfillFailed: (failed) => `${failed} thumbnail${failed === 1 ? '' : 's'} failed to generate`,
+  },
   lightbox: {
     zoomOut: 'Zoom Out (-)',
     resetZoom: 'Reset Zoom (0)',
@@ -1145,12 +1197,26 @@ const en: Translations = {
     sync: 'Sync',
     network: 'Network / Proxy',
     storage: 'Storage',
+    migration: 'Migration Log',
     appearance: 'Appearance',
     language: 'Language',
     about: 'About',
     developer: 'Developer Mode',
     history: 'Sync History',
     backToLibrary: 'Back to Library',
+  },
+  migrationHistory: {
+    heading: 'Migration Log',
+    desc: 'Each image-directory migration: start time, source→target paths, file/byte counts, verify mode, and final status. Expand a failed entry for the error.',
+    empty: 'No migrations yet. Changing the images folder or restoring the default will be recorded here.',
+    clearButton: 'Clear history',
+    statusRunning: 'Running',
+    statusSuccess: 'Success',
+    statusFailed: 'Failed',
+    statusRolledBack: 'Rolled back',
+    restoreDefault: 'Restore default directory',
+    toCustom: 'Migrate to custom directory',
+    files: (n) => `${n} files`,
   },
   settingsHistory: {
     heading: 'Sync History',
@@ -1275,6 +1341,9 @@ const en: Translations = {
     verifyModeLabel: 'Verification Mode',
     verifyModeSize: 'Size comparison',
     verifyModeHash: 'Full hash verification',
+    lastMigrationLabel: 'Last migration',
+    migrationFilesUnit: 'files',
+    viewAllMigrations: 'View all migrations',
   },
   settingsSync: {
     heading: 'Sync Preferences',

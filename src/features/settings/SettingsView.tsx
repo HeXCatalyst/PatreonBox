@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ChevronLeft, UserRound, RefreshCw, History, Globe, HardDrive,
-  Palette, Languages, Info, Wrench, type LucideIcon,
+  Palette, Languages, Info, Wrench, FolderInput, type LucideIcon,
 } from "lucide-react";
 import { SyncSection } from "./sections/SyncSection";
 import { NetworkSection } from "./sections/NetworkSection";
@@ -12,17 +12,19 @@ import { AboutSection } from "./sections/AboutSection";
 import { AccountSection } from "./sections/AccountSection";
 import { DeveloperModeSection } from "./sections/DeveloperModeSection";
 import { SyncHistorySection } from "./sections/SyncHistorySection";
+import { MigrationHistorySection } from "./sections/MigrationHistorySection";
 import { useTranslation } from "../../lib/i18n";
 import { useSettings } from "./SettingsContext";
 
-type Section = 'account' | 'sync' | 'history' | 'network' | 'storage' | 'appearance' | 'language' | 'about' | 'developer';
+type Section = 'account' | 'sync' | 'history' | 'network' | 'storage' | 'migration' | 'appearance' | 'language' | 'about' | 'developer';
 
-const SECTION_MAP: Record<Section, React.ComponentType> = {
+const SECTION_MAP: Record<Section, React.ComponentType<{ onNavigate?: (s: Section) => void }>> = {
   account:    AccountSection,
   sync:       SyncSection,
   history:    SyncHistorySection,
   network:    NetworkSection,
   storage:    StorageSection,
+  migration:  MigrationHistorySection,
   appearance: AppearanceSection,
   language:   LanguageSection,
   about:      AboutSection,
@@ -57,6 +59,7 @@ export function SettingsView({ onClose, initialSection = 'account' }: SettingsVi
     { key: 'history',    label: t.settingsNav.history,    icon: History },
     { key: 'network',    label: t.settingsNav.network,    icon: Globe },
     { key: 'storage',    label: t.settingsNav.storage,    icon: HardDrive },
+    { key: 'migration',  label: t.settingsNav.migration,  icon: FolderInput },
     { key: 'appearance', label: t.settingsNav.appearance, icon: Palette },
     { key: 'language',   label: t.settingsNav.language,   icon: Languages },
     { key: 'about',      label: t.settingsNav.about,      icon: Info },
@@ -99,7 +102,7 @@ export function SettingsView({ onClose, initialSection = 'account' }: SettingsVi
       {/* Right panel */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto p-8">
-          <ActiveComponent />
+          <ActiveComponent onNavigate={setActiveSection} />
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { emit, listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +35,29 @@ function formatBytes(bytes: number): string {
 const FAKE_DATA_DIR = '/Users/demo/Library/Application Support/com.example.patreonbox';
 const FAKE_IMAGES_DIR = `${FAKE_DATA_DIR}/images`;
 
-export function StorageSection() {
+interface LastMigration {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  source_dir: string;
+  target_dir: string;
+  is_restore: boolean;
+  file_count: number | null;
+  total_bytes: number | null;
+  copied_bytes: number | null;
+  verify_mode: string;
+  status: string;
+  error: string | null;
+}
+
+function fmtMigrationBytes(n: number | null): string {
+  if (n == null) return "—";
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+export function StorageSection({ onNavigate }: { onNavigate?: (s: 'account' | 'sync' | 'history' | 'network' | 'storage' | 'migration' | 'appearance' | 'language' | 'about' | 'developer') => void }) {
   const t = useTranslation();
   const [dataDir, setDataDir] = useState<string>('');
   const [usage, setUsage] = useState<StorageUsage | null>(null);
@@ -52,11 +74,34 @@ export function StorageSection() {
   const [migrationCurrent, setMigrationCurrent] = useState(0);
   const [migrationTotal, setMigrationTotal] = useState(0);
   const [migrationError, setMigrationError] = useState<string | null>(null);
+  const [lastMigration, setLastMigration] = useState<LastMigration | null>(null);
+  // Thumbnail regeneration (manual "Regenerate thumbnails" button + the
+  // first-launch auto-backfill both emit thumbnail-backfill-progress). Mirrors
+  // the migration-progress pattern above.
+  const [thumbBackfilling, setThumbBackfilling] = useState(false);
+  const [thumbProgress, setThumbProgress] = useState<{ done: number; total: number; failed: number }>({ done: 0, total: 0, failed: 0 });
+  const [thumbDone, setThumbDone] = useState<{ failed: number } | null>(null);
+
+  const loadLastMigration = useCallback(async () => {
+    try {
+      setLastMigration(await invoke<LastMigration | null>("get_last_migration"));
+    } catch (e) {
+      console.error("get_last_migration failed", e);
+    }
+  }, []);
 
   useEffect(() => {
     invoke<string>('resolve_app_data_dir').then(setDataDir).catch(console.error);
     invoke<StorageUsage>('get_storage_usage').then(setUsage).catch(console.error);
-  }, [cleared, migrating]);
+    loadLastMigration();
+  }, [cleared, migrating, loadLastMigration]);
+
+  // The backend emits this after record_migration_finish, so the last-migration
+  // card refreshes the instant a migration completes — no manual refresh needed.
+  useEffect(() => {
+    const unlisten = listen("image-migrations-changed", () => { loadLastMigration(); });
+    return () => { unlisten.then(f => f()); };
+  }, [loadLastMigration]);
 
   useEffect(() => {
     if (!migrating) return;
@@ -72,6 +117,43 @@ export function StorageSection() {
     );
     return () => { unlisten.then(f => f()); };
   }, [migrating]);
+
+  // Subscribe to thumbnail-backfill-progress for the whole lifetime of this
+  // section — the first-launch auto-backfill (fired from the Rust setup hook)
+  // can also be in flight when the user opens Settings, and we want its
+  // progress visible even though the user didn't click the button. We only
+  // flip thumbBackfilling on for runs the user actually started; the auto run
+  // still surfaces its finished summary via thumbDone.
+  useEffect(() => {
+    const unlisten = listen<{ done: number; total: number; failed: number; finished?: boolean; error?: string }>(
+      'thumbnail-backfill-progress',
+      (event) => {
+        const p = event.payload;
+        setThumbProgress({ done: p.done, total: p.total, failed: p.failed });
+        if (p.finished) {
+          setThumbBackfilling(false);
+          // On a terminal error (DB open failed, etc.) the payload carries
+          // `error` and the counts are 0 — surface as "complete" since the run
+          // did terminate; a retry will re-emit. Otherwise show failures (if
+          // any) or the all-done message.
+          setThumbDone({ failed: p.failed });
+        }
+      }
+    );
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
+  const handleRegenerateThumbs = async () => {
+    setThumbDone(null);
+    setThumbProgress({ done: 0, total: 0, failed: 0 });
+    setThumbBackfilling(true);
+    try {
+      await invoke('backfill_thumbnails');
+    } catch (e) {
+      setThumbBackfilling(false);
+      console.error('backfill_thumbnails failed', e);
+    }
+  };
 
   const handleClearAll = async () => {
     setClearing(true);
@@ -254,6 +336,82 @@ export function StorageSection() {
             </button>
           ))}
         </div>
+      </div>
+
+      {lastMigration && (
+        <div className="mt-6 mb-2 p-4 rounded-lg border bg-muted/30">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="text-sm font-medium">{t.settingsStorage.lastMigrationLabel}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              lastMigration.status === 'success' ? 'bg-green-500/15 text-green-500'
+              : lastMigration.status === 'failed' ? 'bg-destructive/15 text-destructive'
+              : 'bg-amber-500/15 text-amber-500'
+            }`}>
+              {lastMigration.status === 'success' ? t.migrationHistory.statusSuccess
+               : lastMigration.status === 'failed' ? t.migrationHistory.statusFailed
+               : lastMigration.status === 'rolled_back' ? t.migrationHistory.statusRolledBack
+               : t.migrationHistory.statusRunning}
+            </span>
+            <span className="text-xs text-muted-foreground ml-auto tabular-nums">
+              {new Date(lastMigration.started_at).toLocaleString()}
+            </span>
+          </div>
+          <div className="text-xs font-mono text-muted-foreground break-all">
+            {settings.demo_mode ? FAKE_IMAGES_DIR : lastMigration.source_dir}
+            <span className="mx-1">→</span>
+            {settings.demo_mode ? `${FAKE_IMAGES_DIR}-custom` : lastMigration.target_dir}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1 tabular-nums">
+            {lastMigration.file_count ?? 0} {t.settingsStorage.migrationFilesUnit}
+            {' · '}
+            {fmtMigrationBytes(lastMigration.copied_bytes)} / {fmtMigrationBytes(lastMigration.total_bytes)}
+            {' · '}
+            {lastMigration.verify_mode}
+          </div>
+          {onNavigate && (
+            <button
+              className="text-xs text-primary mt-2 hover:underline"
+              onClick={() => onNavigate('migration')}
+            >
+              {t.settingsStorage.viewAllMigrations} →
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between py-4 border-b gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium">{t.thumbnails.regenerateButton}</div>
+          {thumbBackfilling && (
+            <div className="mt-2 max-w-md">
+              <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: thumbProgress.total > 0 ? `${Math.min(100, (thumbProgress.done / thumbProgress.total) * 100)}%` : '0%' }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground mt-1 tabular-nums">
+                {t.thumbnails.backfillProgress(thumbProgress.done, thumbProgress.total)}
+              </div>
+            </div>
+          )}
+          {!thumbBackfilling && thumbDone && (
+            <div className="text-xs text-muted-foreground mt-1">
+              {thumbDone.failed > 0
+                ? t.thumbnails.backfillFailed(thumbDone.failed)
+                : t.thumbnails.backfillDone}
+            </div>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={thumbBackfilling || migrating}
+          onClick={handleRegenerateThumbs}
+        >
+          {thumbBackfilling && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          {t.thumbnails.regenerateButton}
+        </Button>
       </div>
 
       <div className="flex items-center justify-between py-4">
