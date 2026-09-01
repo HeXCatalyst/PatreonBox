@@ -16,8 +16,16 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTranslation } from "../../lib/i18n";
 import type { Translations } from "../../lib/i18n";
+import { sortCreatorsByPaidFirst } from "./creatorSort";
 
 type FilterType = 'all' | 'free' | 'paid' | 'unsubscribed';
+
+/** Currently subscribed with a paid tier → earns the gold glow + float-to-top.
+ *  A cancelled paid sub keeps subscription_type='paid' historically but
+ *  is_subscribed=0, which must NOT glow (it's no longer financially active). */
+function isPaidActive(c: Creator): boolean {
+  return c.is_subscribed === 1 && c.subscription_type === 'paid';
+}
 
 interface SidebarProps {
   creators: (Creator & { post_count: number })[];
@@ -69,7 +77,10 @@ function SortableCreatorItem({
             onClick={() => onSelect(creator.id)}
           >
             <Pin className="h-3 w-3 text-muted-foreground flex-shrink-0 mr-1" />
-            <Avatar className="h-6 w-6 mr-2 flex-shrink-0 creator-avatar">
+            <Avatar
+              className={`h-6 w-6 mr-2 flex-shrink-0 creator-avatar${isPaidActive(creator) ? " creator-avatar-paid" : ""}`}
+              title={isPaidActive(creator) ? t.sidebar.paidTag : undefined}
+            >
               <AvatarImage src={creator.avatar_path || undefined} />
               <AvatarFallback>{creator.name.charAt(0)}</AvatarFallback>
             </Avatar>
@@ -113,7 +124,10 @@ function CreatorItem({
             className={`w-full justify-start h-auto py-2 px-2${selected ? " creator-row-active" : ""}${!creator.is_subscribed ? " opacity-50" : ""}`}
             onClick={() => onSelect(creator.id)}
           >
-            <Avatar className="h-6 w-6 mr-2 flex-shrink-0 creator-avatar">
+            <Avatar
+              className={`h-6 w-6 mr-2 flex-shrink-0 creator-avatar${isPaidActive(creator) ? " creator-avatar-paid" : ""}`}
+              title={isPaidActive(creator) ? t.sidebar.paidTag : undefined}
+            >
               <AvatarImage src={creator.avatar_path || undefined} />
               <AvatarFallback>{creator.name.charAt(0)}</AvatarFallback>
             </Avatar>
@@ -225,7 +239,9 @@ export function Sidebar({
     .filter(c => Boolean(c.is_pinned))
     .sort((a, b) => a.pin_order - b.pin_order);
 
-  const normalCreators = visibleCreators.filter(c => !Boolean(c.is_pinned));
+  const normalCreators = sortCreatorsByPaidFirst(
+    visibleCreators.filter(c => !Boolean(c.is_pinned))
+  );
 
   return (
     <div className="w-full bg-sidebar flex flex-col h-full">
