@@ -235,9 +235,14 @@ export function Sidebar({
     .filter(filterCreators)
     .filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
 
-  const pinnedCreators = visibleCreators
-    .filter(c => Boolean(c.is_pinned))
-    .sort((a, b) => a.pin_order - b.pin_order);
+  // Pinned creators also float paid-subscribed ones to the top, but preserve
+  // the user's manual drag order (pin_order) as the tiebreak WITHIN each group
+  // — so paid creators rise above non-paid within the pinned section without
+  // scrambling the manual reordering the user did.
+  const pinnedCreators = sortCreatorsByPaidFirst(
+    visibleCreators.filter(c => Boolean(c.is_pinned)),
+    (a, b) => a.pin_order - b.pin_order,
+  );
 
   const normalCreators = sortCreatorsByPaidFirst(
     visibleCreators.filter(c => !Boolean(c.is_pinned))

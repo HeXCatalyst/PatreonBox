@@ -22,8 +22,8 @@ function mk(over: Partial<Creator> & { post_count?: number } = {}): Creator & { 
     updated_at: "",
     subscription_type: over.subscription_type ?? null,
     is_subscribed: over.is_subscribed ?? 1,
-    is_pinned: 0,
-    pin_order: 0,
+    is_pinned: over.is_pinned ?? 0,
+    pin_order: over.pin_order ?? 0,
     post_count: over.post_count ?? 0,
   };
 }
@@ -79,5 +79,37 @@ describe("sortCreatorsByPaidFirst", () => {
     const snapshot = input.map((c) => c.id);
     sortCreatorsByPaidFirst(input);
     expect(input.map((c) => c.id)).toEqual(snapshot);
+  });
+
+  // --- Pinned section: paid-first with pin_order tiebreak ---
+  // Pinned creators keep manual drag order (pin_order) as the tiebreak WITHIN
+  // each group, so the user's manual reordering still works inside paid and
+  // non-paid groups — paid creators just float to the top of the pinned list.
+
+  it("uses a custom tiebreak (pin_order) for pinned creators", () => {
+    const out = sortCreatorsByPaidFirst(
+      [
+        mk({ id: "free-b", name: "Beta", subscription_type: "free", pin_order: 5 }),
+        mk({ id: "paid-b", name: "Bravo", subscription_type: "paid", pin_order: 3 }),
+        mk({ id: "free-a", name: "Alpha", subscription_type: "free", pin_order: 1 }),
+        mk({ id: "paid-a", name: "Alpha", subscription_type: "paid", pin_order: 7 }),
+      ],
+      (a, b) => a.pin_order - b.pin_order,
+    );
+    // Paid group by pin_order: paid-b(3), paid-a(7)
+    // Free group by pin_order: free-a(1), free-b(5)
+    expect(out.map((c) => c.id)).toEqual(["paid-b", "paid-a", "free-a", "free-b"]);
+  });
+
+  it("ignores cancelled paid even with a custom tiebreak", () => {
+    const out = sortCreatorsByPaidFirst(
+      [
+        mk({ id: "active-free", name: "Boo", subscription_type: "free", pin_order: 1 }),
+        mk({ id: "cancelled-paid", name: "Aaa", subscription_type: "paid", is_subscribed: 0, pin_order: 0 }),
+      ],
+      (a, b) => a.pin_order - b.pin_order,
+    );
+    // is_subscribed=0 → NOT paid-active → doesn't float; tiebreak by pin_order
+    expect(out.map((c) => c.id)).toEqual(["cancelled-paid", "active-free"]);
   });
 });
