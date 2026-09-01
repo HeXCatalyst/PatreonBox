@@ -222,30 +222,38 @@ use super::file_ops::images_dir;
 /// 幂等：缩略图已存在则不做任何工作。生成失败返回 Err，前端回退原图，
 /// 而非在缺失文件上空转。
 #[tauri::command]
-pub fn ensure_thumbnail(app: AppHandle, local_path: String) -> Result<Option<String>, String> {
+pub async fn ensure_thumbnail(app: AppHandle, local_path: String) -> Result<Option<String>, String> {
     super::image_migration::check_not_migrating(&app)?;
-    // 非图像 asset 直接拒绝：视频/音频无缩略图
+    // 非图像 asset 直接拒绝：视频/音频无缩略图。这条快路径留在异步体内，
+    // 避免为非图像 asset 白白调度一次 spawn_blocking。
     let file_name = local_path.rsplit('/').next().unwrap_or("");
     if !is_image_filename(file_name) {
         return Ok(None);
     }
-    let images_root = images_dir(&app)?;
-    let thumb = thumb_path(&images_root, &local_path)
-        .ok_or_else(|| format!("无法派生缩略图路径: {}", local_path))?;
-    if !thumb.exists() {
-        // 从同一 local_path 派生原图路径
-        let rel = local_path.strip_prefix("images/").unwrap_or(&local_path);
-        let src = images_root.join(rel);
-        if !src.exists() {
-            return Err(format!("原图未找到: {}", src.display()));
+    // decode + Lanczos3 resize + WebP encode (10–50ms+, 更久 on 大图) 不能在
+    // 主线程上跑：MediaView 懒回退每张图触发一次，逐张冻结 UI。挪到 blocking
+    // 线程（与下载完成时的主动生成同一模式，见 download_manager.rs 的 spawn_blocking）。
+    tauri::async_runtime::spawn_blocking(move || {
+        let images_root = images_dir(&app)?;
+        let thumb = thumb_path(&images_root, &local_path)
+            .ok_or_else(|| format!("无法派生缩略图路径: {}", local_path))?;
+        if !thumb.exists() {
+            // 从同一 local_path 派生原图路径
+            let rel = local_path.strip_prefix("images/").unwrap_or(&local_path);
+            let src = images_root.join(rel);
+            if !src.exists() {
+                return Err(format!("原图未找到: {}", src.display()));
+            }
+            generate_thumb(&src, &thumb)?;
         }
-        generate_thumb(&src, &thumb)?;
-    }
-    // 返回 local_path 风格字符串，前端可直接喂给 buildAssetUrl
-    // 重建：images/{creator}/thumb/{stem}.webp
-    let rel = thumb.strip_prefix(&images_root)
-        .map_err(|e| format!("缩略图不在 images_dir 下: {}", e))?;
-    Ok(Some(format!("images/{}", rel.to_string_lossy())))
+        // 返回 local_path 风格字符串，前端可直接喂给 buildAssetUrl
+        // 重建：images/{creator}/thumb/{stem}.webp
+        let rel = thumb.strip_prefix(&images_root)
+            .map_err(|e| format!("缩略图不在 images_dir 下: {}", e))?;
+        Ok(Some(format!("images/{}", rel.to_string_lossy())))
+    })
+    .await
+    .map_err(|e| format!("ensure thumbnail task failed: {}", e))?
 }
 
 use super::util::open_db;

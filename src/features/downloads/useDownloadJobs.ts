@@ -1,24 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTauriEvents } from "../library/hooks/useTauriEvents";
+import type { DownloadJobStatus, DownloadStatus } from "./downloadSummary";
+
+// Re-exported so existing importers keep working; the canonical definitions live
+// in ./downloadSummary, which is the pure, tested derivation shared with
+// useDownloadSummary (the app-shell's lightweight view of the queue).
+export type { DownloadStatus };
 
 export interface DownloadJob {
   asset_id: string;
   creator_id: string;
   file_name: string;
-  status: "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled";
+  status: DownloadJobStatus;
   bytes_done: number;
   bytes_total: number | null;
   error: string | null;
 }
 
-interface DownloadState {
+export interface DownloadState {
   jobs: DownloadJob[];
   paused: boolean;
 }
-
-/** The three visual states the animated Downloads icon reflects. */
-export type DownloadStatus = "idle" | "downloading" | "paused";
 
 /**
  * Live view of the global download queue. Seeds from `get_download_state` and

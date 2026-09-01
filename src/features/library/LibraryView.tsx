@@ -24,10 +24,12 @@ import { PerfHudGate } from "../dev/PerfHud";
 import { FavoritesView } from "../favorites/FavoritesView";
 import { CommandPalette, type PaletteCommand } from "../command/CommandPalette";
 import { applyTheme } from "../../lib/theme";
-import { useDownloadJobs, type DownloadStatus } from "../downloads/useDownloadJobs";
+import { useDownloadSummary } from "../downloads/useDownloadSummary";
+import { type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { useUnseenSyncFailures } from "./hooks/useUnseenSyncFailures";
 import { loadSettings } from "../../lib/settings";
+import { useDebouncedValue } from "../../lib/useDebouncedValue";
 import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import type { AppSettings } from "../../types/settings";
 import { DEFAULT_SETTINGS } from "../../types/settings";
@@ -360,7 +362,13 @@ export function LibraryView() {
   const [view, setView] = useState<'library' | 'settings' | 'downloads' | 'search' | 'favorites'>('library');
   const [settingsInitialSection, setSettingsInitialSection] = useState<'account' | 'history'>('account');
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const { jobs: downloadJobs, activeCount: downloadActiveCount, status: downloadStatus, paused: downloadsPaused, refresh: refreshDownloads } = useDownloadJobs();
+  // P0-3: the root subscribes only to the lightweight {activeCount, status}
+  // summary, not the full per-job list. Progress events update a ref (no
+  // re-render) and only a status/activeCount transition commits state — so the
+  // ~66/sec progress storm no longer re-renders the whole app tree when the
+  // Downloads page isn't even open. The full reactive list lives in
+  // DownloadsView (mounted only while open).
+  const { activeCount: downloadActiveCount, status: downloadStatus } = useDownloadSummary();
   const { unseenFailures } = useUnseenSyncFailures();
   // A search result to open: remembered until the target creator's posts load,
   // then resolved to the actual Post (the creator-change effect clears any prior
@@ -375,6 +383,11 @@ export function LibraryView() {
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [selectedPostAssets, setSelectedPostAssets] = useState<Asset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  // Debounce the search term so the list query only fires after typing settles,
+  // not once per keystroke — the getPosts() payload (now body-trimmed via P0-2)
+  // is still a full-table scan on every fire. The input stays responsive: it
+  // reads `searchQuery` directly; only the *query trigger* waits on this value.
+  const debouncedSearch = useDebouncedValue(searchQuery, 200);
   const [loading, setLoading] = useState(true);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notify = useNotify();
@@ -520,7 +533,16 @@ export function LibraryView() {
       loadPosts().catch(console.error);
       setSelectedPost(null);
     }
-  }, [selectedCreatorId, searchQuery, loading, showStarred, tierFilter, dateFrom, dateTo]);
+    // `debouncedSearch` (not `searchQuery`) is the search trigger so typing
+    // doesn't fire a query per keystroke (P0-2). loadPosts reads the *live*
+    // searchQuery from its closure: by the time debouncedSearch settles the
+    // user has stopped typing, so the live value equals the settled one; and a
+    // creator switch fires this effect immediately via selectedCreatorId with
+    // the just-cleared live searchQuery, so there's no flash of stale-filtered
+    // results. searchQuery is intentionally not a dep — listing it would
+    // re-fire on every keystroke and defeat the debounce.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCreatorId, debouncedSearch, loading, showStarred, tierFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     setTierFilter(null);
@@ -629,7 +651,10 @@ export function LibraryView() {
         // targets, so "10" means 10 for downloading too — not the whole archive.
         maxPosts: maxPosts,
       });
-      await refreshDownloads();
+      // No explicit refresh needed: start_downloads emits download-job-update as
+      // it enqueues each job, and useDownloadSummary (the root's only download
+      // subscription) updates the sidebar badge from those events. The full job
+      // list re-seeds itself when the Downloads page is opened.
     } catch (e) {
       console.error('Failed to start downloads:', e);
       notify({
@@ -1047,9 +1072,6 @@ export function LibraryView() {
           <SettingsView onClose={() => setView('library')} initialSection={settingsInitialSection} />
         ) : view === 'downloads' ? (
           <DownloadsView
-            jobs={downloadJobs}
-            paused={downloadsPaused}
-            onRefresh={refreshDownloads}
             onClose={() => setView('library')}
             creatorName={(id) => creators.find(c => c.id === id)?.name ?? id}
           />

@@ -38,34 +38,40 @@ pub fn resolve_images_dir(app: AppHandle) -> Result<String, String> {
 /// Copy a downloaded asset to the user's Downloads folder.
 /// Returns the destination path on success.
 #[tauri::command]
-pub fn save_asset_to_downloads(app: AppHandle, local_path: String) -> Result<String, String> {
+pub async fn save_asset_to_downloads(app: AppHandle, local_path: String) -> Result<String, String> {
     super::image_migration::check_not_migrating(&app)?;
-    let src = asset_full_path(&app, &local_path)?;
+    // `fs::copy` of a multi-megabyte file blocks; run it off the main thread so
+    // the "Save to Downloads" action doesn't stall the UI on a HDD.
+    tauri::async_runtime::spawn_blocking(move || {
+        let src = asset_full_path(&app, &local_path)?;
 
-    let file_name = src.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("image.jpg")
-        .to_string();
+        let file_name = src.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("image.jpg")
+            .to_string();
 
-    let downloads_dir = app.path().download_dir()
-        .map_err(|e| e.to_string())?;
+        let downloads_dir = app.path().download_dir()
+            .map_err(|e| e.to_string())?;
 
-    // Avoid overwriting an existing file with the same name
-    let mut dest = downloads_dir.join(&file_name);
-    if dest.exists() {
-        let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("jpg");
-        for i in 1..=999 {
-            dest = downloads_dir.join(format!("{}_{}.{}", stem, i, ext));
-            if !dest.exists() { break; }
-        }
+        // Avoid overwriting an existing file with the same name
+        let mut dest = downloads_dir.join(&file_name);
         if dest.exists() {
-            return Err(format!("Downloads folder already contains 999+ copies of {}", file_name));
+            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+            let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+            for i in 1..=999 {
+                dest = downloads_dir.join(format!("{}_{}.{}", stem, i, ext));
+                if !dest.exists() { break; }
+            }
+            if dest.exists() {
+                return Err(format!("Downloads folder already contains 999+ copies of {}", file_name));
+            }
         }
-    }
 
-    fs::copy(&src, &dest).map_err(|e| format!("Failed to copy to Downloads: {}", e))?;
-    Ok(dest.to_string_lossy().to_string())
+        fs::copy(&src, &dest).map_err(|e| format!("Failed to copy to Downloads: {}", e))?;
+        Ok(dest.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("save to downloads task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -142,57 +148,64 @@ pub fn open_asset_in_system(app: AppHandle, local_path: String) -> Result<(), St
 /// so they can be re-fetched (e.g. to replace a low-res image after a re-sync). The
 /// asset/post rows stay intact. Returns how many were cleared.
 #[tauri::command]
-pub fn delete_downloaded_assets(app: AppHandle, asset_ids: Vec<String>) -> Result<usize, String> {
+pub async fn delete_downloaded_assets(app: AppHandle, asset_ids: Vec<String>) -> Result<usize, String> {
     super::image_migration::check_not_migrating(&app)?;
     if asset_ids.is_empty() { return Ok(0); }
+    // Per-asset loop does a DB lookup, a file delete (or trash), a thumbnail
+    // delete and an UPDATE — repeated for every selected asset, so a multi-select
+    // delete can occupy the main thread for seconds on a HDD. Move the whole loop
+    // to a blocking pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        // "trash" (default) moves files to the OS Trash/Recycle Bin; "direct" removes them.
+        let to_trash = {
+            let state = app.state::<super::settings::AppSettingsState>();
+            let s = state.0.read().unwrap_or_else(|e| e.into_inner());
+            s.delete_mode != "direct"
+        };
 
-    // "trash" (default) moves files to the OS Trash/Recycle Bin; "direct" removes them.
-    let to_trash = {
-        let state = app.state::<super::settings::AppSettingsState>();
-        let s = state.0.read().unwrap_or_else(|e| e.into_inner());
-        s.delete_mode != "direct"
-    };
-
-    let conn = open_db(&app)?;
-    let mut cleared = 0usize;
-    for id in &asset_ids {
-        // Look up the file path, delete the file, then clear the download state.
-        let local_path: Option<String> = conn
-            .query_row("SELECT local_path FROM assets WHERE id = ?1", rusqlite::params![id], |r| r.get(0))
-            .ok();
-        if let Some(lp) = local_path {
-            if let Ok(full) = asset_full_path(&app, &lp) {
-                if full.exists() {
-                    if to_trash {
-                        // Fall back to a permanent delete if the file can't be trashed.
-                        if trash::delete(&full).is_err() { let _ = fs::remove_file(&full); }
-                    } else {
-                        let _ = fs::remove_file(&full);
+        let conn = open_db(&app)?;
+        let mut cleared = 0usize;
+        for id in &asset_ids {
+            // Look up the file path, delete the file, then clear the download state.
+            let local_path: Option<String> = conn
+                .query_row("SELECT local_path FROM assets WHERE id = ?1", rusqlite::params![id], |r| r.get(0))
+                .ok();
+            if let Some(lp) = local_path {
+                if let Ok(full) = asset_full_path(&app, &lp) {
+                    if full.exists() {
+                        if to_trash {
+                            // Fall back to a permanent delete if the file can't be trashed.
+                            if trash::delete(&full).is_err() { let _ = fs::remove_file(&full); }
+                        } else {
+                            let _ = fs::remove_file(&full);
+                        }
                     }
                 }
-            }
-            // 同时删缩略图（若存在），不留孤儿
-            if super::thumbnails::is_image_filename(&lp.clone().rsplit('/').next().unwrap_or("")) {
-                if let Ok(images_root) = images_dir(&app) {
-                    if let Some(thumb) = super::thumbnails::thumb_path(&images_root, &lp) {
-                        if thumb.exists() {
-                            if to_trash {
-                                if trash::delete(&thumb).is_err() { let _ = fs::remove_file(&thumb); }
-                            } else {
-                                let _ = fs::remove_file(&thumb);
+                // 同时删缩略图（若存在），不留孤儿
+                if super::thumbnails::is_image_filename(&lp.clone().rsplit('/').next().unwrap_or("")) {
+                    if let Ok(images_root) = images_dir(&app) {
+                        if let Some(thumb) = super::thumbnails::thumb_path(&images_root, &lp) {
+                            if thumb.exists() {
+                                if to_trash {
+                                    if trash::delete(&thumb).is_err() { let _ = fs::remove_file(&thumb); }
+                                } else {
+                                    let _ = fs::remove_file(&thumb);
+                                }
                             }
                         }
                     }
                 }
             }
+            let _ = conn.execute(
+                "UPDATE assets SET downloaded_at = NULL, byte_size = NULL, download_error = NULL WHERE id = ?1",
+                rusqlite::params![id],
+            );
+            cleared += 1;
         }
-        let _ = conn.execute(
-            "UPDATE assets SET downloaded_at = NULL, byte_size = NULL, download_error = NULL WHERE id = ?1",
-            rusqlite::params![id],
-        );
-        cleared += 1;
-    }
-    Ok(cleared)
+        Ok(cleared)
+    })
+    .await
+    .map_err(|e| format!("delete downloaded assets task failed: {}", e))?
 }
 
 /// Copies the bundled DisplayMode/ stock photos onto disk under

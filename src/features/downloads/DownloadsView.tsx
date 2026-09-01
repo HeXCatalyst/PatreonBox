@@ -1,19 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronDown, ChevronRight, Pause, Play, RotateCcw, X, XCircle, AlertTriangle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { DownloadJob } from "./useDownloadJobs";
+import { useDownloadJobs, type DownloadJob } from "./useDownloadJobs";
 import { useThroughput, STALL_SAMPLES, type ThroughputSample } from "./useThroughput";
 import { ThroughputChart } from "./ThroughputChart";
 import { useTranslation } from "../../lib/i18n";
 import { Button } from "@/components/ui/button";
 
 interface DownloadsViewProps {
-  jobs: DownloadJob[];
-  /** Queue-wide pause state, owned by the backend and mirrored by
-   *  useDownloadJobs. Held here rather than locally so the button still reads
-   *  correctly after navigating away and back. */
-  paused: boolean;
-  onRefresh: () => void;
   onClose: () => void;
   creatorName: (id: string) => string;
 }
@@ -120,8 +114,13 @@ function ThroughputMonitor({
   );
 }
 
-export function DownloadsView({ jobs, paused, onRefresh, onClose, creatorName }: DownloadsViewProps) {
+export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
   const t = useTranslation();
+  // Owns the full reactive job list. Mounted only while this page is open, so
+  // its per-event setJobs (the ~66/sec progress storm) re-renders only this
+  // view, not the app shell — the P0-3 fix. The shell keeps just {activeCount,
+  // status} via useDownloadSummary.
+  const { jobs, paused, refresh } = useDownloadJobs();
   const [showCompleted, setShowCompleted] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(
     () => localStorage.getItem(MONITOR_KEY) !== "0",
@@ -149,7 +148,7 @@ export function DownloadsView({ jobs, paused, onRefresh, onClose, creatorName }:
     });
   };
 
-  const act = async (p: Promise<unknown>) => { try { await p; } catch (e) { console.error(e); } onRefresh(); };
+  const act = async (p: Promise<unknown>) => { try { await p; } catch (e) { console.error(e); } refresh(); };
 
   // No optimistic local flip: the backend emits download-paused, which
   // useDownloadJobs applies, so the button follows the actual queue state.

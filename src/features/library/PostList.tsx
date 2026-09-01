@@ -525,7 +525,7 @@ export function PostList({
                   </span>
                 </div>
                 <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
-                  {post.excerpt || post.content_raw?.substring(0, 100)}
+                  {post.excerpt || ""}
                 </p>
                 {post.has_assets > 0 && (
                   <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 asset-chip">
