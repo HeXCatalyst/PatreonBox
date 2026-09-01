@@ -112,4 +112,32 @@ describe("sortCreatorsByPaidFirst", () => {
     // is_subscribed=0 → NOT paid-active → doesn't float; tiebreak by pin_order
     expect(out.map((c) => c.id)).toEqual(["cancelled-paid", "active-free"]);
   });
+
+  // --- IconRail scenario: the already-subscribed list, paid floats in both
+  // the pinned group (pin_order tiebreak) and the rest group (alphabetical) —
+  // the Workbench rail previously sorted both groups WITHOUT paid priority. ---
+
+  it("floats paid to the top of an already-subscribed list (IconRail rest)", () => {
+    const subscribed = [
+      mk({ id: "free-ana", name: "Ana", subscription_type: "free" }),
+      mk({ id: "paid-zed", name: "Zed", subscription_type: "paid" }),
+      mk({ id: "free-bob", name: "Bob", subscription_type: "free" }),
+    ];
+    const out = sortCreatorsByPaidFirst(subscribed);
+    expect(out.map((c) => c.id)).toEqual(["paid-zed", "free-ana", "free-bob"]);
+  });
+
+  it("floats paid to the top of pinned entries (IconRail pinned)", () => {
+    const out = sortCreatorsByPaidFirst(
+      [
+        mk({ id: "free-1", name: "Aaa", subscription_type: "free", pin_order: 1 }),
+        mk({ id: "paid-3", name: "Ccc", subscription_type: "paid", pin_order: 3 }),
+        mk({ id: "free-2", name: "Bbb", subscription_type: "free", pin_order: 2 }),
+        mk({ id: "paid-0", name: "Ddd", subscription_type: "paid", pin_order: 0 }),
+      ],
+      (a, b) => a.pin_order - b.pin_order,
+    );
+    // paid-0(0), paid-3(3) — then free-1(1), free-2(2)
+    expect(out.map((c) => c.id)).toEqual(["paid-0", "paid-3", "free-1", "free-2"]);
+  });
 });

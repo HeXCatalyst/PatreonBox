@@ -5,6 +5,14 @@ import { useNotifications } from "../notifications/NotificationContext";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
+import { sortCreatorsByPaidFirst } from "../library/creatorSort";
+
+/** Currently subscribed with a paid tier → gold glow + float-to-top, same
+ *  rule as the classic sidebar's. A cancelled paid sub keeps
+ *  subscription_type='paid' historically but is_subscribed=0 → no glow. */
+function isPaidActive(c: Creator): boolean {
+  return c.is_subscribed === 1 && c.subscription_type === "paid";
+}
 
 interface IconRailProps {
   creators: (Creator & { post_count: number })[];
@@ -39,9 +47,15 @@ export function IconRail({
   const t = useTranslation();
   const { unreadCount } = useNotifications();
 
+  // Paid-subscribed creators float to the top of BOTH groups (same rule as the
+  // classic sidebar): pinned keeps manual drag order as tiebreak within its
+  // paid/non-paid groups, the rest falls back to alphabetical within groups.
   const subscribed = creators.filter(c => Boolean(c.is_subscribed));
-  const pinned = subscribed.filter(c => Boolean(c.is_pinned)).sort((a, b) => a.pin_order - b.pin_order);
-  const rest = subscribed.filter(c => !Boolean(c.is_pinned)).sort((a, b) => a.name.localeCompare(b.name));
+  const pinned = sortCreatorsByPaidFirst(
+    subscribed.filter(c => Boolean(c.is_pinned)),
+    (a, b) => a.pin_order - b.pin_order,
+  );
+  const rest = sortCreatorsByPaidFirst(subscribed.filter(c => !Boolean(c.is_pinned)));
   const ordered = [...pinned, ...rest];
 
   return (
@@ -79,11 +93,11 @@ export function IconRail({
               <button
                 key={c.id}
                 onClick={() => onSelectCreator(c.id)}
-                title={`${c.name} · ${c.post_count}`}
+                title={`${c.name} · ${c.post_count}${isPaidActive(c) ? ` · ${t.sidebar.paidTag}` : ""}`}
                 className="relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 {active && <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-primary" />}
-                <Avatar className={`h-9 w-9 transition-shadow ${active ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100 creator-avatar"}`}>
+                <Avatar className={`h-9 w-9 transition-shadow creator-avatar${isPaidActive(c) ? " creator-avatar-paid" : ""} ${active ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100"}`}>
                   <AvatarImage src={c.avatar_path || undefined} />
                   <AvatarFallback>{c.name.charAt(0)}</AvatarFallback>
                 </Avatar>
