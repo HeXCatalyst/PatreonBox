@@ -5,7 +5,7 @@ import { useNotifications } from "../notifications/NotificationContext";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
-import { sortCreatorsByPaidFirst } from "../library/creatorSort";
+import { sortRailCreators } from "../library/creatorSort";
 
 /** Currently subscribed with a paid tier → gold glow + float-to-top, same
  *  rule as the classic sidebar's. A cancelled paid sub keeps
@@ -47,16 +47,11 @@ export function IconRail({
   const t = useTranslation();
   const { unreadCount } = useNotifications();
 
-  // Paid-subscribed creators float to the top of BOTH groups (same rule as the
-  // classic sidebar): pinned keeps manual drag order as tiebreak within its
-  // paid/non-paid groups, the rest falls back to alphabetical within groups.
+  // The rail is one continuous list (no section headers), so ALL paid-active
+  // creators — pinned AND unpinned — float above every free creator; manual
+  // pin_order / alphabetical survives inside each tier. See sortRailCreators.
   const subscribed = creators.filter(c => Boolean(c.is_subscribed));
-  const pinned = sortCreatorsByPaidFirst(
-    subscribed.filter(c => Boolean(c.is_pinned)),
-    (a, b) => a.pin_order - b.pin_order,
-  );
-  const rest = sortCreatorsByPaidFirst(subscribed.filter(c => !Boolean(c.is_pinned)));
-  const ordered = [...pinned, ...rest];
+  const ordered = sortRailCreators(subscribed);
 
   return (
     <div className="w-full h-full bg-sidebar border-r flex flex-col items-center py-3 gap-2">

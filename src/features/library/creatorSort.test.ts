@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sortCreatorsByPaidFirst } from "./creatorSort";
+import { sortCreatorsByPaidFirst, sortRailCreators } from "./creatorSort";
 import type { Creator } from "../../types/db";
 
 // The sidebar groups creators into pinned (manual order) and normal sections.
@@ -139,5 +139,49 @@ describe("sortCreatorsByPaidFirst", () => {
     );
     // paid-0(0), paid-3(3) — then free-1(1), free-2(2)
     expect(out.map((c) => c.id)).toEqual(["paid-0", "paid-3", "free-1", "free-2"]);
+  });
+});
+
+// --- sortRailCreators: the Workbench rail's continuous list ---
+// The rail has NO section headers, so concatenating [pinned, rest] put a
+// paid-but-unpinned creator below FREE pinned entries — reading as a sort
+// bug. The rail must float ALL paid-active creators (pinned AND unpinned)
+// above every free creator, keeping manual pin_order / alphabetical inside
+// each group.
+
+describe("sortRailCreators", () => {
+  it("groups ALL paid (pinned + unpinned) above any free creator", () => {
+    const out = sortRailCreators([
+      mk({ id: "free-pin-5", name: "Fp", subscription_type: "free", is_pinned: 1, pin_order: 5 }),
+      mk({ id: "paid-rest", name: "Pr", subscription_type: "paid" }),
+      mk({ id: "paid-pin-2", name: "Pp", subscription_type: "paid", is_pinned: 1, pin_order: 2 }),
+      mk({ id: "paid-pin-8", name: "Pq", subscription_type: "paid", is_pinned: 1, pin_order: 8 }),
+      mk({ id: "free-rest-a", name: "Fa", subscription_type: "free" }),
+    ]);
+    // All paid first: pinned paid by pin_order(2,8), then unpinned paid.
+    // Then free: pinned (pin_order), then alphabetical.
+    expect(out.map((c) => c.id)).toEqual([
+      "paid-pin-2", "paid-pin-8", "paid-rest",
+      "free-pin-5", "free-rest-a",
+    ]);
+  });
+
+  it("keeps cancelled paid from floating on the rail", () => {
+    const out = sortRailCreators([
+      mk({ id: "cancelled", name: "Aaa", subscription_type: "paid", is_subscribed: 0, is_pinned: 1, pin_order: 0 }),
+      mk({ id: "free-pin", name: "Bbb", subscription_type: "free", is_pinned: 1, pin_order: 1 }),
+    ]);
+    // is_subscribed=0 → NOT paid-active → sorts among free by pinned/pin_order
+    expect(out.map((c) => c.id)).toEqual(["cancelled", "free-pin"]);
+  });
+
+  it("does not mutate the input array", () => {
+    const input = [
+      mk({ id: "free", name: "Aaa" }),
+      mk({ id: "paid", name: "Zzz", subscription_type: "paid" }),
+    ];
+    const snapshot = input.map((c) => c.id);
+    sortRailCreators(input);
+    expect(input.map((c) => c.id)).toEqual(snapshot);
   });
 });
