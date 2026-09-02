@@ -114,21 +114,29 @@ fn map_row(row: &rusqlite::Row) -> rusqlite::Result<SearchResult> {
 /// Cross-creator full-text search over post titles + content. Uses FTS5 when
 /// available (ranked by bm25), falling back to a LIKE scan otherwise.
 #[tauri::command]
-pub fn search_posts(app: AppHandle, query: String, limit: Option<i64>) -> Result<Vec<SearchResult>, String> {
-    let q = query.trim();
+pub async fn search_posts(app: AppHandle, query: String, limit: Option<i64>) -> Result<Vec<SearchResult>, String> {
+    let q = query.trim().to_string();
     if q.is_empty() {
         return Ok(vec![]);
     }
     let limit = limit.unwrap_or(100).clamp(1, 500);
-    let conn = open_db(&app)?;
+    // FTS index build (on first search) and the LIKE fallback scan the posts
+    // table; on a large library both can take long enough to visibly stall the
+    // UI if run on the main thread. The empty-query short-circuit above stays
+    // here so an empty search costs no dispatch.
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db(&app)?;
 
-    if ensure_search_index(&conn).is_ok() {
-        // A malformed MATCH (shouldn't happen after quoting) falls back to LIKE.
-        if let Ok(results) = run_fts_query(&conn, &build_fts_match(q), limit) {
-            return Ok(results);
+        if ensure_search_index(&conn).is_ok() {
+            // A malformed MATCH (shouldn't happen after quoting) falls back to LIKE.
+            if let Ok(results) = run_fts_query(&conn, &build_fts_match(&q), limit) {
+                return Ok(results);
+            }
         }
-    }
-    run_like_query(&conn, q, limit).map_err(|e| e.to_string())
+        run_like_query(&conn, &q, limit).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("search posts task failed: {}", e))?
 }
 
 #[cfg(test)]
@@ -152,15 +160,21 @@ mod tests {
 /// Drop and rebuild the FTS index from scratch — recovers from any drift or a
 /// corrupt index without touching the source `posts` data.
 #[tauri::command]
-pub fn rebuild_search_index(app: AppHandle) -> Result<(), String> {
-    let conn = open_db(&app)?;
-    conn.execute_batch(
-        r#"
+pub async fn rebuild_search_index(app: AppHandle) -> Result<(), String> {
+    // Rebuilding rewrites the FTS table from every post's content — proportional
+    // to the library size, so move it off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db(&app)?;
+        conn.execute_batch(
+            r#"
         DROP TRIGGER IF EXISTS posts_fts_ai;
         DROP TRIGGER IF EXISTS posts_fts_ad;
         DROP TRIGGER IF EXISTS posts_fts_au;
         DROP TABLE IF EXISTS posts_fts;
         "#,
-    ).map_err(|e| e.to_string())?;
-    ensure_search_index(&conn).map_err(|e| format!("FTS5 unavailable: {}", e))
+        ).map_err(|e| e.to_string())?;
+        ensure_search_index(&conn).map_err(|e| format!("FTS5 unavailable: {}", e))
+    })
+    .await
+    .map_err(|e| format!("rebuild search index task failed: {}", e))?
 }

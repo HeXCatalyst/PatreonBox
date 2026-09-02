@@ -25,6 +25,7 @@ export interface Translations {
     pin: string;
     delete: string;
     unsubscribedTag: string;
+    paidTag: string;
     deleteConfirmTitle: (name: string) => string;
     deleteConfirmDesc: string;
     confirmDelete: string;
@@ -499,6 +500,7 @@ const zh: Translations = {
     pin: '置顶',
     delete: '删除',
     unsubscribedTag: '（已退订）',
+    paidTag: '付费档位',
     deleteConfirmTitle: (name) => `删除「${name}」？`,
     deleteConfirmDesc: '将同时删除所有帖子和已下载图片，此操作不可撤销。',
     confirmDelete: '确认删除',
@@ -973,6 +975,7 @@ const en: Translations = {
     pin: 'Pin',
     delete: 'Delete',
     unsubscribedTag: '(Unsubscribed)',
+    paidTag: 'Paid Tier',
     deleteConfirmTitle: (name) => `Delete "${name}"?`,
     deleteConfirmDesc: 'This will also delete all posts and downloaded images. This action cannot be undone.',
     confirmDelete: 'Confirm Delete',

@@ -267,12 +267,22 @@ pub fn write_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn get_storage_usage(app: AppHandle) -> Result<StorageUsage, String> {
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let db_bytes = std::fs::metadata(base.join("patreonbox.db"))
-        .map(|m| m.len()).unwrap_or(0);
-    let images_bytes = dir_size(&super::file_ops::images_dir(&app)?);
-    Ok(StorageUsage { db_bytes, images_bytes })
+pub async fn get_storage_usage(app: AppHandle) -> Result<StorageUsage, String> {
+    // dir_size() recursively walks the images directory — on a HDD with 11k+
+    // files that's a multi-second main-thread freeze every time Settings opens.
+    // Run it on a blocking pool; app_data_dir()/images_dir() resolve fine off the
+    // main thread (same pattern as the proactive thumbnail generation in
+    // download_manager.rs). A non-async command would execute this body inline
+    // on the main thread (Tauri v2 runs sync commands via `body_blocking`).
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let db_bytes = std::fs::metadata(base.join("patreonbox.db"))
+            .map(|m| m.len()).unwrap_or(0);
+        let images_bytes = dir_size(&super::file_ops::images_dir(&app)?);
+        Ok(StorageUsage { db_bytes, images_bytes })
+    })
+    .await
+    .map_err(|e| format!("storage usage task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -281,19 +291,27 @@ pub fn get_app_version(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-pub fn clear_all_data(app: AppHandle) -> Result<(), String> {
+pub async fn clear_all_data(app: AppHandle) -> Result<(), String> {
     super::image_migration::check_not_migrating(&app)?;
-    let conn = open_db(&app)?;
-    conn.execute("DELETE FROM posts", [])
-        .map_err(|e| format!("DB error: {}", e))?;
-    conn.execute("DELETE FROM assets", []).map_err(|e| format!("DB error: {}", e))?;
-    conn.execute("DELETE FROM sync_runs", []).map_err(|e| format!("DB error: {}", e))?;
-    conn.execute("DELETE FROM sync_checkpoints", []).map_err(|e| format!("DB error: {}", e))?;
-    let images_dir_path = super::file_ops::images_dir(&app)?;
-    if images_dir_path.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&images_dir_path) {
-            eprintln!("WARN: Could not remove images dir: {}", e);
+    // Full-table DELETEs + remove_dir_all over thousands of files would freeze
+    // the UI if run on the main thread. The migration check above is cheap (one
+    // AtomicBool read) so it stays here; the heavy DB + FS work moves to a
+    // blocking pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db(&app)?;
+        conn.execute("DELETE FROM posts", [])
+            .map_err(|e| format!("DB error: {}", e))?;
+        conn.execute("DELETE FROM assets", []).map_err(|e| format!("DB error: {}", e))?;
+        conn.execute("DELETE FROM sync_runs", []).map_err(|e| format!("DB error: {}", e))?;
+        conn.execute("DELETE FROM sync_checkpoints", []).map_err(|e| format!("DB error: {}", e))?;
+        let images_dir_path = super::file_ops::images_dir(&app)?;
+        if images_dir_path.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&images_dir_path) {
+                eprintln!("WARN: Could not remove images dir: {}", e);
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("clear all data task failed: {}", e))?
 }

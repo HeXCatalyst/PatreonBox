@@ -95,6 +95,21 @@ function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, m => `\\${m}`);
 }
 
+// Columns every list query selects. Deliberately omits `content_raw` and
+// `content_rendered_html`: the scraper writes the *same* HTML into both
+// (scraping.rs:652-653), so `SELECT p.*` shipped two duplicate full-text copies
+// per row — ~20MB per keystroke at 1k posts, the IPC-payload bloat flagged as
+// P0-2. The body is fetched on demand by `getPostBody` when a post is opened.
+// `content_raw` is still available to the WHERE clause below (it's a column on
+// the table; the projection only controls what comes back over IPC).
+const POST_LIST_COLUMNS = `
+  p.id, p.creator_id, p.source_key, p.external_id, p.title, p.excerpt,
+  p.content_format, p.source_url, p.published_at, p.archived_at,
+  p.has_assets, p.read_state, p.is_starred, p.created_at, p.updated_at,
+  p.min_cents_pledged_to_view,
+  c.name as creator_name, c.avatar_path as creator_avatar_path
+`;
+
 export async function getPosts(
   creatorId?: string,
   search?: string,
@@ -105,7 +120,7 @@ export async function getPosts(
 ): Promise<Post[]> {
   const db = await getDb();
   let query = `
-    SELECT p.*, c.name as creator_name, c.avatar_path as creator_avatar_path
+    SELECT ${POST_LIST_COLUMNS}
     FROM posts p
     JOIN creators c ON p.creator_id = c.id
     WHERE 1=1
@@ -175,7 +190,7 @@ export async function getPostAssets(postId: string): Promise<Asset[]> {
 export async function getAllPostsChrono(limit = 300): Promise<Post[]> {
   const db = await getDb();
   return db.select(
-    `SELECT p.*, c.name as creator_name, c.avatar_path as creator_avatar_path
+    `SELECT ${POST_LIST_COLUMNS}
      FROM posts p
      JOIN creators c ON p.creator_id = c.id
      WHERE c.is_subscribed = 1
@@ -183,6 +198,28 @@ export async function getAllPostsChrono(limit = 300): Promise<Post[]> {
      LIMIT ?`,
     [limit],
   );
+}
+
+/**
+ * Fetch a single post's body (the two columns deliberately excluded from the
+ * list projection). `content_rendered_html` is the rendered HTML the reading
+ * view injects; `content_raw` is the same string the scraper also writes there
+ * (kept as a fallback). Called on demand when a post is opened — see
+ * ReadingView — so the body never rides along with the list query.
+ */
+export async function getPostBody(postId: string): Promise<{
+  content_rendered_html: string | null;
+  content_raw: string | null;
+}> {
+  const db = await getDb();
+  const rows = await db.select<{
+    content_rendered_html: string | null;
+    content_raw: string | null;
+  }[]>(
+    "SELECT content_rendered_html, content_raw FROM posts WHERE id = ?",
+    [postId],
+  );
+  return rows[0] ?? { content_rendered_html: null, content_raw: null };
 }
 
 /**

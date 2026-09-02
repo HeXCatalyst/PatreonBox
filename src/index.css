@@ -40,6 +40,9 @@
     --sidebar-ring: oklch(0.708 0 0);
     --star: #f59e0b;
     --link: #2563eb;
+    /* Avatar glow ring for paid-subscribed creators (sidebar priority indicator).
+       Gold by intent; re-tinted per named theme to harmonise with its palette. */
+    --gold: #f59e0b;
 }
 
 .dark {
@@ -76,6 +79,7 @@
     --sidebar-ring: oklch(0.556 0 0);
     --star: #f59e0b;
     --link: #6b9bf7;
+    --gold: #f59e0b;
 }
 
 @theme inline {
@@ -85,6 +89,7 @@
        back to Georgia elsewhere. */
     --font-serif: 'Iowan Old Style', 'Charter', 'Palatino Linotype', Palatino, Georgia, ui-serif, serif;
     --color-star: var(--star);
+    --color-gold: var(--gold);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -249,6 +254,7 @@
   --sidebar-accent:#2f2820; --sidebar-accent-foreground:#ece3d4;
   --sidebar-border:rgba(255,238,214,.09); --sidebar-ring:#e8964a;
   --star:#e8964a; --link:#e8964a;
+  --gold:#e8964a;
   --glow-a:rgba(232,150,74,.14);
 }
 
@@ -272,6 +278,7 @@
   --sidebar-accent:#23272c; --sidebar-accent-foreground:#eef4d8;
   --sidebar-border:#2a2f34; --sidebar-ring:#a3e12b;
   --star:#a3e12b; --link:#5b93cc;
+  --gold:#f0c33a;
   --glow-a:rgba(163,225,43,.13); --glow-b:rgba(47,90,134,.20);
 }
 /* Nightwolf's steel navy ("the markings", calm): constant structural touches
@@ -295,6 +302,7 @@
   --sidebar-accent:#3e2d20; --sidebar-accent-foreground:#efe3cd;
   --sidebar-border:rgba(240,216,164,.10); --sidebar-ring:#eaa62f;
   --star:#eaa62f; --link:#eaa62f;
+  --gold:#eaa62f;
 }
 /* --- Dhole — light (stepped: sidebar deepest → list → reading lightest) --- */
 :root[data-color-theme="dhole"]:not(.dark) {
@@ -311,6 +319,7 @@
   --sidebar-accent:#ecd7a4; --sidebar-accent-foreground:#33241a;
   --sidebar-border:rgba(74,50,20,.14); --sidebar-ring:#bd5527;
   --star:#d8912a; --link:#bd5527;
+  --gold:#d8912a;
   --glow-a:rgba(234,166,47,.12);
 }
 
@@ -329,6 +338,7 @@
   --sidebar-accent:#2b3c5e; --sidebar-accent-foreground:#eaf1fb;
   --sidebar-border:rgba(180,205,255,.10); --sidebar-ring:#f0c33a;
   --star:#ef9ab0; --link:#6bb0e8;
+  --gold:#f0c33a;
   --glow-a:rgba(240,195,58,.12); --glow-b:rgba(74,155,216,.14);
 }
 /* --- Azure Fox — light (frost, stepped) --- */
@@ -346,6 +356,7 @@
   --sidebar-accent:#d7e6f6; --sidebar-accent-foreground:#1b2a45;
   --sidebar-border:rgba(28,42,68,.13); --sidebar-ring:#bd6a12;
   --star:#d1657f; --link:#2f74b8;
+  --gold:#bd6a12;
 }
 
 /* Ambient reading-pane glow — each character theme sets --glow-a (top-right)
@@ -385,3 +396,16 @@
    scrollbar gutter pushes the centered avatars off-axis. */
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Gold glow ring on avatars of paid-subscribed creators — the sidebar priority
+   indicator (paid creators also sort first). Uses a solid ring + soft bloom so
+   it reads on real avatar images; reduced-motion drops the bloom, keeps the
+   ring (the ring is the signal; the bloom is decoration). */
+.creator-avatar-paid {
+  box-shadow:
+    0 0 0 2px var(--gold),
+    0 0 8px 1px color-mix(in srgb, var(--gold) 55%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .creator-avatar-paid { box-shadow: 0 0 0 2px var(--gold); }
+}

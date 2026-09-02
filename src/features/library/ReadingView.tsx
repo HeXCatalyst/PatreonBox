@@ -2,8 +2,8 @@ import { Post, Asset } from "../../types/db";
 import { formatPostDate } from "../../lib/formatDate";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Calendar, ExternalLink, Image as ImageIcon, Star } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { Calendar, ExternalLink, Image as ImageIcon, Loader2, Star } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ImageLightbox } from "./ImageLightbox";
 import { PostComments } from "./PostComments";
@@ -11,6 +11,7 @@ import { ImageGallery } from "./ImageGallery";
 import { useTranslation } from "../../lib/i18n";
 import { buildAssetUrl, useImagesDir } from "../../lib/assetUrl";
 import { mediaKindOfAsset } from "../../lib/media";
+import { getPostBody } from "../../lib/db";
 
 interface ReadingViewProps {
   post: Post | null;
@@ -32,6 +33,34 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
     setToast(msg);
     toastTimer.current = setTimeout(() => setToast(null), 2000);
   }, []);
+
+  // The post body is no longer shipped with the list query (P0-2): the list
+  // projection omits content_rendered_html/content_raw, so the body is fetched
+  // on demand here when a post is opened. Demo-mode posts carry their body
+  // inline (getDemoPosts), so they short-circuit the fetch. `inlineBody` also
+  // covers any post that already arrived with a body (e.g. opened from a source
+  // that didn't go through the trimmed list query).
+  const inlineBody = post?.content_rendered_html || post?.content_raw || null;
+  const [fetchedBody, setFetchedBody] = useState<string | null>(null);
+  const [bodyLoading, setBodyLoading] = useState(false);
+  useEffect(() => {
+    setFetchedBody(null);
+    if (!post || inlineBody) { setBodyLoading(false); return; }
+    let cancelled = false;
+    setBodyLoading(true);
+    getPostBody(post.id)
+      .then(b => {
+        if (!cancelled) {
+          setFetchedBody(b.content_rendered_html ?? b.content_raw);
+          setBodyLoading(false);
+        }
+      })
+      .catch(() => { if (!cancelled) setBodyLoading(false); });
+    return () => { cancelled = true; };
+    // inlineBody is derived from post; depending on post?.id + inlineBody covers
+    // both "opened a different post" and "fell back to inline (demo)".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post?.id, inlineBody]);
 
   const assetUrl = (path: string, version?: string | null) =>
     (imagesDir ? buildAssetUrl(imagesDir, path, version) : undefined);
@@ -128,15 +157,28 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
           
           <Separator className="mb-8" />
           
-          {(post.content_rendered_html || post.content_raw) ? (
-            <div className="prose prose-base dark:prose-invert max-w-none mb-12 font-serif leading-relaxed [--tw-prose-links:var(--link)] [--tw-prose-invert-links:var(--link)]"
-              dangerouslySetInnerHTML={{ __html: post.content_rendered_html || post.content_raw! }}
-            />
-          ) : (
-            <div className="mb-12 text-sm text-muted-foreground italic">
-              {post.has_assets > 0 ? t.readingView.imagePostHint : t.readingView.noTextContent}
-            </div>
-          )}
+          {(() => {
+            const html = inlineBody ?? fetchedBody;
+            if (html) {
+              return (
+                <div className="prose prose-base dark:prose-invert max-w-none mb-12 font-serif leading-relaxed [--tw-prose-links:var(--link)] [--tw-prose-invert-links:var(--link)]"
+                  dangerouslySetInnerHTML={{ __html: html }}
+                />
+              );
+            }
+            if (bodyLoading) {
+              return (
+                <div className="mb-12 text-sm text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+              );
+            }
+            return (
+              <div className="mb-12 text-sm text-muted-foreground italic">
+                {post.has_assets > 0 ? t.readingView.imagePostHint : t.readingView.noTextContent}
+              </div>
+            );
+          })()}
           </div>
 
           {assets.length > 0 && (
