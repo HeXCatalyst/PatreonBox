@@ -35,4 +35,16 @@ export async function ensurePostsColumns(db: SqlExec): Promise<void> {
   if (!present.has('min_cents_pledged_to_view')) {
     await db.execute("ALTER TABLE posts ADD COLUMN min_cents_pledged_to_view INTEGER");
   }
+  // Partial indexes for the two filter columns (P1-10): is_starred is
+  // low-cardinality (almost all rows are 0), so a full index is wasted — a
+  // WHERE is_starred = 1 partial index stays tiny and serves the starred-only
+  // list query directly. min_cents_pledged_to_view is used for tier filtering.
+  // Both are CREATE INDEX IF NOT EXISTS, so they're no-ops on databases that
+  // already have them (e.g. re-runs after a schemaHeal patch).
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_posts_starred ON posts(is_starred) WHERE is_starred = 1",
+  );
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_posts_min_cents ON posts(min_cents_pledged_to_view)",
+  );
 }

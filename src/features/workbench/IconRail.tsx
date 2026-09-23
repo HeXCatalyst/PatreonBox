@@ -1,10 +1,12 @@
+import { memo, useMemo } from "react";
 import { Creator } from "../../types/db";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Search, Settings, History, RefreshCw, Loader2, Star, Bell } from "lucide-react";
-import { useNotifications } from "../notifications/NotificationContext";
+import { useUnreadCount } from "../notifications/NotificationContext";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
+import type { Translations } from "../../lib/i18n";
 import { sortRailCreators } from "../library/creatorSort";
 
 /** Currently subscribed with a paid tier → gold glow + float-to-top, same
@@ -33,11 +35,48 @@ interface IconRailProps {
 }
 
 /**
+ * One avatar in the rail. Memoized because switching creator re-renders the
+ * rail and only two avatars actually change (`active`); with a long
+ * subscription list that is the difference between two elements and N.
+ * All props except `active` keep their identity between selections.
+ */
+const RailCreatorButton = memo(function RailCreatorButton({
+  creator,
+  active,
+  onSelect,
+  t,
+}: {
+  creator: Creator & { post_count: number };
+  active: boolean;
+  onSelect: (id: string) => void;
+  t: Translations;
+}) {
+  const paid = isPaidActive(creator);
+  return (
+    <button
+      onClick={() => onSelect(creator.id)}
+      title={`${creator.name} · ${creator.post_count}${paid ? ` · ${t.sidebar.paidTag}` : ""}`}
+      className="relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      {active && <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-primary" />}
+      <Avatar className={`h-9 w-9 transition-shadow creator-avatar${paid ? " creator-avatar-paid" : ""} ${active ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100"}`}>
+        <AvatarImage src={creator.avatar_path || undefined} />
+        <AvatarFallback>{creator.name.charAt(0)}</AvatarFallback>
+      </Avatar>
+    </button>
+  );
+});
+
+/**
  * The Workbench's slim left rail: creator avatars (pinned first, active ringed)
  * over a scroll area, with search / downloads / settings at the bottom. Names
  * live in tooltips; ⌘K (a later phase) covers fast switching for long lists.
+ *
+ * Memoized: every prop is a stable callback, a stable list or a small badge
+ * value, so the rail only re-renders when one of those genuinely changes —
+ * not when the workbench around it re-renders.
  */
-export function IconRail({
+export const IconRail = memo(function IconRail({
   creators, selectedCreatorId, onSelectCreator,
   onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings, onOpenNotifications,
   onOpenTimeline, timelineActive,
@@ -45,13 +84,17 @@ export function IconRail({
   downloadStatus, downloadActiveCount, settingsErrorCount,
 }: IconRailProps) {
   const t = useTranslation();
-  const { unreadCount } = useNotifications();
+  // Just the badge number, not the notification log — the log (and its 250ms
+  // toast tick) would otherwise repaint the rail several times a second.
+  const unreadCount = useUnreadCount();
 
   // The rail is one continuous list (no section headers), so ALL paid-active
   // creators — pinned AND unpinned — float above every free creator; manual
   // pin_order / alphabetical survives inside each tier. See sortRailCreators.
-  const subscribed = creators.filter(c => Boolean(c.is_subscribed));
-  const ordered = sortRailCreators(subscribed);
+  const ordered = useMemo(
+    () => sortRailCreators(creators.filter(c => Boolean(c.is_subscribed))),
+    [creators],
+  );
 
   return (
     <div className="w-full h-full bg-sidebar border-r flex flex-col items-center py-3 gap-2">
@@ -82,23 +125,15 @@ export function IconRail({
 
       <div className="flex-1 w-full overflow-y-auto no-scrollbar">
         <div className="flex flex-col items-center gap-2 py-1">
-          {ordered.map(c => {
-            const active = c.id === selectedCreatorId;
-            return (
-              <button
-                key={c.id}
-                onClick={() => onSelectCreator(c.id)}
-                title={`${c.name} · ${c.post_count}${isPaidActive(c) ? ` · ${t.sidebar.paidTag}` : ""}`}
-                className="relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                {active && <span className="absolute -left-3 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-primary" />}
-                <Avatar className={`h-9 w-9 transition-shadow creator-avatar${isPaidActive(c) ? " creator-avatar-paid" : ""} ${active ? "ring-2 ring-primary" : "opacity-80 hover:opacity-100"}`}>
-                  <AvatarImage src={c.avatar_path || undefined} />
-                  <AvatarFallback>{c.name.charAt(0)}</AvatarFallback>
-                </Avatar>
-              </button>
-            );
-          })}
+          {ordered.map(c => (
+            <RailCreatorButton
+              key={c.id}
+              creator={c}
+              active={c.id === selectedCreatorId}
+              onSelect={onSelectCreator}
+              t={t}
+            />
+          ))}
         </div>
       </div>
 
@@ -137,4 +172,4 @@ export function IconRail({
       </div>
     </div>
   );
-}
+});

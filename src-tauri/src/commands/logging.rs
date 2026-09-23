@@ -1,7 +1,10 @@
 use tauri::{AppHandle, Manager};
 use std::fs;
 
-#[tauri::command]
+/// Pure filesystem append (log dir + log file), so it runs on the blocking
+/// threadpool instead of inline on the main thread (`async` on a non-async fn =
+/// "sync_threadpool" in Tauri v2, no signature change).
+#[tauri::command(async)]
 pub fn log_sync_error(app: AppHandle, error_message: String) -> Result<(), String> {
     let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     if !log_dir.exists() {

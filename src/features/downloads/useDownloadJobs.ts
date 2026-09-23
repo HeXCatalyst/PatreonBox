@@ -24,6 +24,22 @@ export interface DownloadState {
 }
 
 /**
+ * One job as `get_download_summary` reports it (P1-6): identity + status. The
+ * seed for `useDownloadSummary`, which only ever derives a count and an icon
+ * state from the queue — file names, byte counters and error strings would be
+ * shipped over IPC to be immediately discarded.
+ */
+export interface DownloadJobLite {
+  asset_id: string;
+  status: DownloadJobStatus;
+}
+
+export interface DownloadSummaryState {
+  active: DownloadJobLite[];
+  paused: boolean;
+}
+
+/**
  * Live view of the global download queue. Seeds from `get_download_state` and
  * applies incremental events: `download-job-update` (per-job upsert),
  * `download-job-removed` (per-job delete) and `download-paused` (queue-wide).

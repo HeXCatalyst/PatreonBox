@@ -17,8 +17,15 @@ import { formatPostDate } from "../../lib/formatDate";
 import { FilterPanel } from "./FilterPanel";
 import type { DatePreset } from "./FilterPanel";
 import { useTranslation } from "../../lib/i18n";
+import { useDebouncedValue } from "../../lib/useDebouncedValue";
+import { useSyncProgress } from "./progress";
 
-const POSTS_PER_PAGE = 20;
+/** Page size for the classic list. The root owns the page number and asks SQL
+ * for exactly this many rows (P1-5) — this constant is the one place the size is
+ * defined, and it is exported so the root's query agrees with the pager. */
+export const POSTS_PER_PAGE = 20;
+/** How long typing has to settle before the search is handed to the query layer. */
+const SEARCH_DEBOUNCE_MS = 200;
 
 // Prominent sync-progress row shown at the top of the post panel while a post
 // sync or image download runs. Handles the indeterminate case (total unknown,
@@ -63,13 +70,18 @@ function EnhancedSyncBar({ phase, progress, total }: { phase: 'posts' | 'images'
 }
 
 interface PostListProps {
+  /** Only the current page's rows — the root queries one page at a time (P1-5). */
   posts: Post[];
+  /** Total rows matching the current query, for the pager. */
+  totalPosts: number;
+  /** 1-based page number, owned by the root so the query and the pager can't
+   * drift apart (the page number is a query input now). */
+  page: number;
+  onPageChange: (page: number) => void;
   searchQuery: string;
   selectedPostId: string | null;
   selectedCreator?: Creator & { post_count: number };
   isSyncingPosts?: boolean;
-  syncProgress?: number;
-  syncTotal?: number;
   maxPosts: number;
   onMaxPostsChange: (n: number) => void;
   onSearch: (q: string) => void;
@@ -113,12 +125,13 @@ interface PostListProps {
 
 export function PostList({
   posts,
+  totalPosts,
+  page,
+  onPageChange,
   searchQuery,
   selectedPostId,
   selectedCreator,
   isSyncingPosts,
-  syncProgress = 0,
-  syncTotal = 0,
   maxPosts,
   onMaxPostsChange,
   onSearch,
@@ -156,7 +169,11 @@ export function PostList({
   onShowMedia,
 }: PostListProps) {
   const t = useTranslation();
-  const [currentPage, setCurrentPage] = useState(1);
+  // The live sync counter comes from the progress store, not from a root prop.
+  // It ticks once per sync page; wiring it through the root's state (as before)
+  // re-rendered the entire tree — sidebar, reading pane, and in the workbench
+  // layout a filmstrip holding one cell per post — on every tick.
+  const { current: syncProgress, total: syncTotal } = useSyncProgress();
   const [maxPostsInput, setMaxPostsInput] = useState(String(maxPosts));
   const [pageJumpInput, setPageJumpInput] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -167,15 +184,41 @@ export function PostList({
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const postsPerPage = POSTS_PER_PAGE;
 
+  // The search box owns its own text. It used to be bound straight to the
+  // library root's state, so every keystroke re-rendered the whole app tree —
+  // sidebar rows (each carrying a context menu and a dialog), the reading pane,
+  // and in the workbench layout a filmstrip with one cell per post — just to
+  // move a caret. Typing now repaints only this panel; the settled value is
+  // handed up once, and the root's query effect fires from there.
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const settledSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
+  // Last value this panel handed up, so the parent's own value can be told
+  // apart from our echo of it.
+  const propagatedSearchRef = useRef(searchQuery);
+
+  useEffect(() => {
+    // Only hand up a term the debounce has caught up with. Without this, a
+    // term abandoned mid-type — the user clicks a creator, the parent clears
+    // its search, 200ms later the pending timer fires — would be pushed back up
+    // and re-filter a list the user just reset.
+    if (settledSearch !== searchInput) return;
+    if (settledSearch === propagatedSearchRef.current) return;
+    propagatedSearchRef.current = settledSearch;
+    onSearch(settledSearch);
+  }, [settledSearch, searchInput, onSearch]);
+
+  // A parent-driven reset (switching creator, opening a post from the palette)
+  // wins over the local draft.
+  useEffect(() => {
+    if (searchQuery === propagatedSearchRef.current) return;
+    propagatedSearchRef.current = searchQuery;
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
+
   const modeLabel = (m: 'normal' | 'full') => {
     if (m === 'full') return t.postList.modeFull;
     return t.postList.modeNormal;
   };
-
-  // Reset pagination when searching or changing creator/filters
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, selectedCreator?.id, showStarred, tierFilter, datePreset, dateFrom, dateTo]);
 
   // Close filter panel only when creator or starred view changes
   useEffect(() => {
@@ -211,13 +254,14 @@ export function PostList({
   const commitPageJump = () => {
     const val = parseInt(pageJumpInput);
     if (!isNaN(val) && val >= 1 && val <= totalPages) {
-      setCurrentPage(val);
+      onPageChange(val);
     }
     setPageJumpInput("");
   };
 
-  const totalPages = Math.ceil(posts.length / postsPerPage);
-  const displayPosts = posts.slice((currentPage - 1) * postsPerPage, currentPage * postsPerPage);
+  // At least one page, so the pager can render while a query returns nothing
+  // (an empty result set is "page 1 of 1", not "page 1 of 0").
+  const totalPages = Math.max(1, Math.ceil(totalPosts / postsPerPage));
 
   return (
     <div className="w-full flex flex-col h-full bg-background relative">
@@ -225,7 +269,7 @@ export function PostList({
         {showStarred ? (
           <div className="flex items-center gap-2 pb-1">
             <Star className="h-4 w-4 fill-star text-star" />
-            <span className="font-semibold text-sm">{t.postList.starredHeading(posts.length)}</span>
+            <span className="font-semibold text-sm">{t.postList.starredHeading(totalPosts)}</span>
           </div>
         ) : selectedCreator && (
           <div className="flex items-center justify-between pb-1 gap-1.5 flex-wrap">
@@ -417,8 +461,8 @@ export function PostList({
             <Input
               placeholder={t.postList.searchPlaceholder}
               className="pl-9"
-              value={searchQuery}
-              onChange={e => onSearch(e.target.value)}
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
             />
           </div>
           {!showStarred && selectedCreator && (
@@ -483,7 +527,7 @@ export function PostList({
               )}
             </div>
           ) : (
-            displayPosts.map(post => (
+            posts.map(post => (
               <div
                 key={post.id}
                 onClick={() => onSelectPost(post)}
@@ -544,14 +588,14 @@ export function PostList({
           <Button 
             variant="ghost" 
             size="sm" 
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
+            onClick={() => onPageChange(Math.max(1, page - 1))}
+            disabled={page === 1}
             className="h-8 px-2"
           >
             <ChevronLeft className="h-4 w-4 mr-1" /> {t.postList.prev}
           </Button>
           <div className="flex items-center gap-1.5">
-            <span className="font-medium text-xs">{currentPage}</span>
+            <span className="font-medium text-xs">{page}</span>
             <span className="text-xs">/</span>
             <span className="font-medium text-xs">{totalPages}</span>
             <input
@@ -570,8 +614,8 @@ export function PostList({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+            disabled={page === totalPages}
             className="h-8 px-2"
           >
             {t.postList.next} <ChevronRight className="h-4 w-4 ml-1" />
@@ -613,7 +657,7 @@ export function PostList({
                 setClearError(null);
                 try {
                   await onClearData?.();
-                  setCurrentPage(1);
+                  onPageChange(1);
                   setConfirmOpen(false);
                 } catch (e) {
                   setClearError(String(e));

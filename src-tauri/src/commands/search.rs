@@ -21,21 +21,51 @@ fn posts_fts_exists(conn: &Connection) -> bool {
     ).is_ok()
 }
 
-/// Idempotently create the FTS5 index (self-contained: stores its own copy of
-/// title + content, kept synced by triggers on `posts`) and backfill it from the
-/// existing posts. Returns Err if the bundled SQLite lacks FTS5 — callers then
-/// fall back to a LIKE scan. Only builds when the table is absent, so it never
+/// True when the FTS table is in external-content mode (content='posts'),
+/// meaning it stores only the inverted index, not a third copy of the body text.
+fn fts_is_external_content(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM posts_fts_config WHERE key = 'content' AND value = 'posts'",
+        [],
+        |_| Ok(()),
+    ).is_ok()
+}
+
+/// Idempotently create the FTS5 index in **external content mode**: the FTS
+/// table stores only the inverted index (terms → rowids), while the body text
+/// stays in `posts.content_rendered_html`. This avoids the third full-text copy
+/// that self-contained mode duplicates per post (P1-9).
+///
+/// If an existing FTS table is in the old self-contained mode, it's dropped
+/// and rebuilt here so the upgrade is automatic on the next search.
+///
+/// Returns Err if the bundled SQLite lacks FTS5 — callers then fall back to a
+/// LIKE scan. Only builds when the table is absent or in old mode, so it never
 /// double-backfills.
 pub fn ensure_search_index(conn: &Connection) -> Result<(), rusqlite::Error> {
     if posts_fts_exists(conn) {
-        return Ok(());
+        if fts_is_external_content(conn) {
+            return Ok(());
+        }
+        // Old self-contained mode: drop and recreate as external content.
+        conn.execute_batch(
+            "DROP TRIGGER IF EXISTS posts_fts_ai;
+             DROP TRIGGER IF EXISTS posts_fts_ad;
+             DROP TRIGGER IF EXISTS posts_fts_au;
+             DROP TABLE IF EXISTS posts_fts;",
+        )?;
+        // Fall through to create the external-content version.
     }
     conn.execute_batch(
         r#"
-        CREATE VIRTUAL TABLE posts_fts USING fts5(title, content);
+        CREATE VIRTUAL TABLE posts_fts USING fts5(
+            title, content_rendered_html,
+            content='posts',
+            content_rowid='rowid'
+        );
 
         CREATE TRIGGER IF NOT EXISTS posts_fts_ai AFTER INSERT ON posts BEGIN
-            INSERT INTO posts_fts(rowid, title, content)
+            INSERT INTO posts_fts(rowid, title, content_rendered_html)
             VALUES (new.rowid, new.title, new.content_rendered_html);
         END;
         CREATE TRIGGER IF NOT EXISTS posts_fts_ad AFTER DELETE ON posts BEGIN
@@ -43,11 +73,11 @@ pub fn ensure_search_index(conn: &Connection) -> Result<(), rusqlite::Error> {
         END;
         CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE ON posts BEGIN
             DELETE FROM posts_fts WHERE rowid = old.rowid;
-            INSERT INTO posts_fts(rowid, title, content)
+            INSERT INTO posts_fts(rowid, title, content_rendered_html)
             VALUES (new.rowid, new.title, new.content_rendered_html);
         END;
 
-        INSERT INTO posts_fts(rowid, title, content)
+        INSERT INTO posts_fts(rowid, title, content_rendered_html)
         SELECT rowid, title, content_rendered_html FROM posts;
         "#,
     )
@@ -154,6 +184,55 @@ mod tests {
             .query_row("SELECT count(*) FROM t WHERE t MATCH 'hello'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    // External-content mode (P1-9): the FTS table stores only the inverted
+    // index; body text lives in `posts.content_rendered_html`. Verifies that
+    // search still works and the table doesn't carry a content shadow table.
+    #[test]
+    fn external_content_fts_searches_and_avoids_content_duplication() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE posts (
+                   id TEXT PRIMARY KEY,
+                   title TEXT,
+                   content_rendered_html TEXT
+               );
+               CREATE VIRTUAL TABLE posts_fts USING fts5(
+                   title, content_rendered_html,
+                   content='posts',
+                   content_rowid='rowid'
+               );
+               INSERT INTO posts (id, title, content_rendered_html)
+                   VALUES ('1', 'Hello World', '<p>body text here</p>');
+               INSERT INTO posts_fts (rowid, title, content_rendered_html)
+                   VALUES (1, 'Hello World', '<p>body text here</p>');"#,
+        ).expect("external-content FTS creation failed");
+
+        // Search finds the post by title term.
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM posts_fts WHERE posts_fts MATCH 'hello'",
+                [], |r| r.get(0),
+            ).unwrap();
+        assert_eq!(n, 1);
+
+        // Search finds by content term.
+        let n2: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM posts_fts WHERE posts_fts MATCH 'body'",
+                [], |r| r.get(0),
+            ).unwrap();
+        assert_eq!(n2, 1);
+
+        // External-content mode: no _content shadow table (body text not
+        // duplicated — the whole point of P1-9).
+        let has_shadow: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='posts_fts_content'",
+                [], |r| r.get(0),
+            ).unwrap();
+        assert_eq!(has_shadow, 0, "external-content FTS should not have a _content shadow table");
     }
 }
 

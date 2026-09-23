@@ -44,6 +44,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # win the spec (D1) projects from q80 lossy. The `webp` crate bundles
 # libwebp (pure C, builds with CC=clang) and exposes lossy encode.
 webp = "0.3"
+rayon = "1"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(unix)'.dependencies]

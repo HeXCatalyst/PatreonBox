@@ -7,8 +7,9 @@ import { debounce } from "./debounce";
  * every change); only the *returned* value is delayed, so effects that depend on
  * it fire at most once per burst of typing rather than once per keystroke.
  *
- * Powers the post-list search (LibraryView): without it every keystroke fired a
- * full `getPosts()` query — the ~20MB/keystroke payload flagged as P0-2.
+ * Powers the post-list search (LibraryView): without it every keystroke fired the
+ * posts query — the payload flagged as P0-2, now one page instead of the
+ * creator's whole history.
  *
  * The trailing-edge timing itself lives in the tested `debounce` util; this is
  * only the React binding (a single stable debounced setter held across renders,

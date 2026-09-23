@@ -319,7 +319,9 @@ export const DEMO_CREATORS: (Creator & { post_count: number })[] = DEMO_CREATORS
   post_count: DEMO_POSTS.filter(p => p.creator_id === c.id).length,
 }));
 
-/** Mirrors getPosts()'s creatorId/starred filtering and its published_at DESC ordering. */
+/** Mirrors the posts list query's creatorId/starred filtering and its
+ * published_at DESC ordering. Demo mode paginates this array in JS, since there
+ * is no database to LIMIT against. */
 export function getDemoPosts(creatorId?: string, starredOnly?: boolean): Post[] {
   return DEMO_POSTS
     .filter(p => (starredOnly ? p.is_starred === 1 : true))

@@ -244,14 +244,34 @@ fn detect_env_https_proxy() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Open a rusqlite connection to the app's database
+/// Open a rusqlite connection to the app's database.
+///
+/// PRAGMAs set here:
+///  - `journal_mode=WAL`    — persistent (stored in the DB file), so once any
+///    connection sets it, every connection — including the frontend's
+///    tauri-plugin-sql (sqlx) pool — benefits. WAL lets readers and a writer
+///    coexist, directly relieving the lock contention between the backend
+///    rusqlite path and the frontend sqlx path (e.g. first-launch backfill
+///    vs. a `getDb` query).
+///  - `synchronous=NORMAL`   — safe under WAL (the only fsync risk is the
+///    last-committed transaction on a power loss, not corruption); avoids a
+///    full fsync per commit, which is the write-amplification bottleneck on HDD.
+///  - `busy_timeout=5000`    — per-connection: wait up to 5 s for a lock
+///    instead of erroring immediately when a rare WAL-mode contention window
+///    (e.g. a checkpoint) overlaps two writers.
+///  - `foreign_keys=ON`      — enforce cascade/integrity constraints.
 pub fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
     let db_path = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?
         .join("patreonbox.db");
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| format!("Failed to open database: {}", e))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
-        .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;\
+         PRAGMA synchronous = NORMAL;\
+         PRAGMA busy_timeout = 5000;\
+         PRAGMA foreign_keys = ON;"
+    )
+    .map_err(|e| format!("Failed to set database pragmas: {}", e))?;
     Ok(conn)
 }

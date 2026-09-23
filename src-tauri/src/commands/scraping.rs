@@ -575,6 +575,7 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
 
     let incremental = incremental.unwrap_or(false);
     let conn = open_db(&app)?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     let now = chrono::Utc::now().to_rfc3339();
     let mut saved = 0;
@@ -586,6 +587,21 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
     // posts underneath it. Counting the page lets one such post pass through.
     let mut post_count = 0usize;
     let mut existing_count = 0usize;
+
+    // Pre-fetch the set of existing post IDs for this creator so the incremental
+    // check is an O(1) HashSet lookup instead of a per-post SELECT EXISTS (the
+    // N+1 write-amplification flagged as P1-3). Fetched before any upserts in
+    // this page, so it reflects the committed state from previous runs — exactly
+    // what "already synced" means.
+    let existing_ids: std::collections::HashSet<String> = if incremental {
+        let mut stmt = tx.prepare("SELECT id FROM posts WHERE creator_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![creator_id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect()
+    } else {
+        std::collections::HashSet::new()
+    };
 
     // Included media/attachment metadata, keyed by id so the per-post
     // relationships below can resolve which files belong to which post.
@@ -618,15 +634,12 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
 
             if incremental {
                 post_count += 1;
-                let already_exists: bool = conn
-                    .query_row("SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?1)", rusqlite::params![post_id], |r| r.get(0))
-                    .unwrap_or(false);
-                if already_exists {
+                if existing_ids.contains(&post_id) {
                     existing_count += 1;
                 }
             }
 
-            let result = conn.execute(
+            let result = tx.execute(
                 "INSERT INTO posts (id, creator_id, source_key, external_id, title, excerpt, content_raw, content_rendered_html, content_format, source_url, published_at, has_assets, read_state, created_at, updated_at, min_cents_pledged_to_view)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                  ON CONFLICT(id) DO UPDATE SET
@@ -691,8 +704,7 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
             // the existing row regardless of what id scheme produced it.
             let asset_id = format!("{:x}", stable_hash(&format!("{}:{}", post_id, filename)));
             let rel_path = format!("images/{}/high_res/{}", creator_id, filename);
-            let now = chrono::Utc::now().to_rfc3339();
-            let _ = conn.execute(
+            let _ = tx.execute(
                 "INSERT INTO assets
                  (id, post_id, source_url, local_path, file_name, mime_type, media_type, created_at, updated_at, downloaded_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)
@@ -701,7 +713,7 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
                    mime_type = excluded.mime_type,
                    media_type = excluded.media_type,
                    updated_at = excluded.updated_at",
-                rusqlite::params![asset_id, post_id, dl_url, rel_path, filename, mime_type, media_type, now, now],
+                rusqlite::params![asset_id, post_id, dl_url, rel_path, filename, mime_type, media_type, &now, &now],
             );
         }
         eprintln!("DEBUG: Registered {} asset metadata records.", media_to_download.len());
@@ -713,7 +725,7 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
     match &effective_cursor {
         Some(c) if !c.is_empty() => {
             // More pages to come: upsert checkpoint, accumulating posts_done
-            conn.execute(
+            tx.execute(
                 "INSERT INTO sync_checkpoints (creator_id, cursor, posts_done, mode, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(creator_id) DO UPDATE SET
@@ -726,13 +738,19 @@ pub async fn report_scraped_post_page(app: AppHandle, creator_id: String, page: 
         }
         _ => {
             // cursor is None or empty: last page — delete checkpoint (sync complete)
-            conn.execute(
+            tx.execute(
                 "DELETE FROM sync_checkpoints WHERE creator_id = ?1",
                 rusqlite::params![creator_id],
             ).map_err(|e| format!("Checkpoint delete failed: {}", e))?;
             eprintln!("DEBUG: Checkpoint cleared for {} (last page)", creator_id);
         }
     }
+
+    // One fsync for the whole page (posts + assets + checkpoint), not one per
+    // statement. Without this, a 1000-post sync at ~4 statements/post ≈ 4000
+    // separate transactions, each triggering a WAL journal fsync — the
+    // write-amplification bottleneck on HDD flagged as P1-3.
+    tx.commit().map_err(|e| format!("Transaction commit failed: {}", e))?;
 
     Ok(hit_existing)
 }

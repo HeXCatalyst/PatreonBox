@@ -207,6 +207,28 @@ pub fn run() {
                   CREATE INDEX IF NOT EXISTS idx_image_migrations_started ON image_migrations(started_at);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            // P1-10 index gaps. The per-creator post list (getPosts) orders by
+            // published_at DESC filtered by creator_id; without a composite
+            // index the planner scans + sorts every call. The single-column
+            // idx_posts_creator_id (v1) / idx_posts_creator (v11) can't help with
+            // the sort, so this composite makes both the filter and the ORDER BY
+            // a single index walk. The sync_runs index covers
+            // get_unseen_failed_count's WHERE status='failed' AND started_at > ?
+            // — previously only idx_sync_runs_source_key existed.
+            //
+            // NOTE: posts.is_starred / min_cents_pledged_to_view columns are
+            // added by the frontend's schemaHeal.ts (SQLite has no ADD COLUMN IF
+            // NOT EXISTS, so they can't be in a migration). Their indexes are
+            // also added there, after the columns exist.
+            version: 15,
+            description: "add_perf_indexes",
+            sql: "CREATE INDEX IF NOT EXISTS idx_posts_creator_date \
+                  ON posts(creator_id, published_at DESC); \
+                  CREATE INDEX IF NOT EXISTS idx_sync_runs_status_started \
+                  ON sync_runs(status, started_at);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -344,6 +366,7 @@ pub fn run() {
             commands::self_check::run_self_check,
             commands::download_manager::start_downloads,
             commands::download_manager::get_download_state,
+            commands::download_manager::get_download_summary,
             commands::download_manager::pause_downloads,
             commands::download_manager::resume_downloads,
             commands::download_manager::cancel_download,

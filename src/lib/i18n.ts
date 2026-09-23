@@ -204,6 +204,8 @@ export interface Translations {
     collapseMonitor: string;
     expandMonitor: string;
     etaLeft: (t: string) => string;
+    /** Queued rows hidden by the render cap: "+N more queued". */
+    moreQueued: (n: number) => string;
     queuedDash: string;
   };
   mediaView: {
@@ -679,6 +681,7 @@ const zh: Translations = {
     collapseMonitor: '收起吞吐图',
     expandMonitor: '展开吞吐图',
     etaLeft: (t) => `剩余 ${t}`,
+    moreQueued: (n) => `还有 ${n} 个排队中…`,
     queuedDash: '—',
   },
   mediaView: {
@@ -1154,6 +1157,7 @@ const en: Translations = {
     collapseMonitor: 'Collapse throughput chart',
     expandMonitor: 'Show throughput chart',
     etaLeft: (t) => `${t} left`,
+    moreQueued: (n) => `+${n} more queued…`,
     queuedDash: '—',
   },
   mediaView: {

@@ -293,16 +293,40 @@ fn save_comment_pages(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let _ = conn.execute("DELETE FROM comments WHERE post_id = ?1", rusqlite::params![post_id]);
+    // One transaction for the DELETE + all INSERTs: without this, a post with 50
+    // comments did 51 separate implicit transactions (each a WAL fsync). The
+    // DELETE-then-replace pattern means a crash mid-insert would leave the post
+    // with zero comments (DELETE already committed, some INSERTs not yet) — a
+    // transaction makes the replace atomic, so a crash leaves the old cache intact.
     let mut count = 0usize;
-    for r in rows.values() {
-        let res = conn.execute(
-            "INSERT OR REPLACE INTO comments
-               (id, post_id, parent_id, author_name, author_id, body, published_at, reply_count, fetched_at, is_author, author_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            rusqlite::params![r.id, post_id, r.parent_id, r.author_name, r.author_id, r.body, r.published_at, r.reply_count, now, r.is_author as i32, r.author_url],
-        );
-        if res.is_ok() { count += 1; }
+    match conn.unchecked_transaction() {
+        Ok(tx) => {
+            let _ = tx.execute("DELETE FROM comments WHERE post_id = ?1", rusqlite::params![post_id]);
+            for r in rows.values() {
+                let res = tx.execute(
+                    "INSERT OR REPLACE INTO comments
+                       (id, post_id, parent_id, author_name, author_id, body, published_at, reply_count, fetched_at, is_author, author_url)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    rusqlite::params![r.id, post_id, r.parent_id, r.author_name, r.author_id, r.body, r.published_at, r.reply_count, now, r.is_author as i32, r.author_url],
+                );
+                if res.is_ok() { count += 1; }
+            }
+            let _ = tx.commit();
+        }
+        Err(_) => {
+            // Fallback (shouldn't happen with a fresh connection from open_db):
+            // write without a transaction — still lands, just without the batched-fsync win.
+            let _ = conn.execute("DELETE FROM comments WHERE post_id = ?1", rusqlite::params![post_id]);
+            for r in rows.values() {
+                let res = conn.execute(
+                    "INSERT OR REPLACE INTO comments
+                       (id, post_id, parent_id, author_name, author_id, body, published_at, reply_count, fetched_at, is_author, author_url)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    rusqlite::params![r.id, post_id, r.parent_id, r.author_name, r.author_id, r.body, r.published_at, r.reply_count, now, r.is_author as i32, r.author_url],
+                );
+                if res.is_ok() { count += 1; }
+            }
+        }
     }
     count
 }

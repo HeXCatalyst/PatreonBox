@@ -1,19 +1,21 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { translations } from "../../lib/i18n";
 import {
   getCreators,
-  getPosts,
+  getPostsPage,
+  getPostById,
   getPostAssets,
   toggleStarPost,
   getDistinctTiersForCreator,
   getPostIdsForComments,
   getAllPostIdsMissingComments,
+  type PostsFilterOptions,
 } from "../../lib/db";
 import type { Creator, Post, Asset, SyncCheckpoint } from "../../types/db";
 import { Sidebar } from "./Sidebar";
-import { PostList } from "./PostList";
+import { PostList, POSTS_PER_PAGE } from "./PostList";
 import { ReadingView } from "./ReadingView";
 import { MediaView } from "./MediaView";
 import { SettingsView } from "../settings/SettingsView";
@@ -29,7 +31,6 @@ import { type DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTauriEvents } from "./hooks/useTauriEvents";
 import { useUnseenSyncFailures } from "./hooks/useUnseenSyncFailures";
 import { loadSettings } from "../../lib/settings";
-import { useDebouncedValue } from "../../lib/useDebouncedValue";
 import { DEMO_CREATORS, getDemoPosts, getDemoAssets } from "../../lib/demoData";
 import type { AppSettings } from "../../types/settings";
 import { DEFAULT_SETTINGS } from "../../types/settings";
@@ -40,6 +41,14 @@ import { NotificationCenter } from "../notifications/NotificationCenter";
 import type { NotifyAction } from "../notifications/store";
 import { ResizeDivider } from "./ResizeDivider";
 import type { DatePreset } from "./FilterPanel";
+import { CommentBackfillBanner } from "./CommentBackfillBanner";
+import {
+  beginSyncProgress,
+  clearCommentBackfillProgress,
+  endSyncProgress,
+  setCommentBackfillProgress,
+  updateSyncProgress,
+} from "./progress";
 
 const MAX_ERROR_LENGTH = 80;
 /** Error text long enough to be a stack trace is useless in a notification card. */
@@ -60,8 +69,6 @@ function errorDetail(e: unknown): string {
 interface PostSyncProps {
   syncingPosts: boolean;
   syncingCreatorId: string | null;
-  syncProgress: number;
-  syncTotal: number;
   maxPosts: number;
   syncMode: 'normal' | 'full';
   incrementalSync: boolean;
@@ -125,7 +132,18 @@ interface LibraryPanesProps {
   // Core library data + selection, needed by every layout — genuinely
   // cross-cutting, so left flat rather than forced into a group.
   creators: (Creator & { post_count: number })[];
+  /** The classic list's current page (P1-5). The workbench queries its own
+   * filmstrip index from `postsFilter` instead. */
   posts: Post[];
+  postsTotal: number;
+  page: number;
+  onPageChange: (page: number) => void;
+  /** Which posts the list is looking at — the workbench runs the same filter for
+   * its filmstrip index, so both layouts agree on the set by construction. */
+  postsFilter: PostsFilterOptions;
+  /** Bumped to refresh the workbench index without changing the query (sync
+   * finished, demo mode flipped). */
+  reloadToken: number;
   selectedCreatorId: string | null;
   selectedPost: Post | null;
   selectedPostAssets: Asset[];
@@ -142,6 +160,9 @@ interface LibraryPanesProps {
   onDeleteCreator: (id: string) => Promise<void>;
   onSelectStarred: () => void;
   onSelectPost: (post: Post) => void;
+  /** Open a post by id — the workbench filmstrip and keyboard navigation only
+   * hold ids (P1-5). */
+  onSelectPostById: (postId: string) => void;
   onOpenPost: (creatorId: string, postId: string) => void;
   onClearData: () => Promise<void>;
   onToggleStar: (post: Post, newStarred: boolean) => void;
@@ -154,10 +175,11 @@ interface LibraryPanesProps {
 }
 
 function LibraryPanes({
-  creators, posts, selectedCreatorId, selectedPost, selectedPostAssets,
+  creators, posts, postsTotal, page, onPageChange, postsFilter, reloadToken,
+  selectedCreatorId, selectedPost, selectedPostAssets,
   creatorTab, mediaOrder, searchQuery, showStarred, clearingCreatorId,
   onCreatorTabChange, onMediaOrderChange, onSearch, onSelectCreator,
-  onCreatorsUpdated, onDeleteCreator, onSelectStarred, onSelectPost, onOpenPost,
+  onCreatorsUpdated, onDeleteCreator, onSelectStarred, onSelectPost, onSelectPostById, onOpenPost,
   onClearData, onToggleStar,
   postSync, imageDownload, filters, subscriptions, nav,
 }: LibraryPanesProps) {
@@ -165,7 +187,7 @@ function LibraryPanes({
   // interface and the call site; the render body below keeps reading the
   // individual values, so it doesn't change.
   const {
-    syncingPosts, syncingCreatorId, syncProgress, syncTotal, maxPosts, syncMode,
+    syncingPosts, syncingCreatorId, maxPosts, syncMode,
     incrementalSync, postCheckpoint, onSyncPosts, onPausePosts, onCancelPosts,
     onResumePosts, onSyncModeChange, onIncrementalSyncChange, onMaxPostsChange,
   } = postSync;
@@ -186,6 +208,10 @@ function LibraryPanes({
   const { settings, updateSettings } = useSettings();
   const [sidebarWidth, setSidebarWidth] = useState(settings.sidebar_width);
   const [postListWidth, setPostListWidth] = useState(settings.post_list_width);
+  // P2-11: handed to the dividers so a drag resizes the pane by direct DOM
+  // write instead of one setState per mousemove (see ResizeDivider).
+  const sidebarPaneRef = useRef<HTMLDivElement | null>(null);
+  const postListPaneRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setSidebarWidth(settings.sidebar_width);
@@ -201,10 +227,11 @@ function LibraryPanes({
         creators={creators}
         selectedCreatorId={selectedCreatorId}
         onSelectCreator={onSelectCreator}
-        posts={posts}
+        postsFilter={postsFilter}
+        reloadToken={reloadToken}
         selectedPost={selectedPost}
         selectedPostAssets={selectedPostAssets}
-        onSelectPost={onSelectPost}
+        onSelectPostById={onSelectPostById}
         onOpenPost={onOpenPost}
         onToggleStar={onToggleStar}
         onOpenSearch={onOpenSearch}
@@ -228,8 +255,6 @@ function LibraryPanes({
         }}
         isSyncingPosts={syncingPosts && selectedCreatorId === syncingCreatorId}
         isSyncingImages={syncingImagesCreatorId != null && syncingImagesCreatorId === selectedCreatorId}
-        syncProgress={syncProgress}
-        syncTotal={syncTotal}
         imageProgress={imageProgress}
         imageTotal={imageTotal}
         maxPosts={maxPosts}
@@ -247,7 +272,7 @@ function LibraryPanes({
 
   return (
     <>
-      <div style={{ width: sidebarWidth, flexShrink: 0 }} className="h-full">
+      <div ref={sidebarPaneRef} style={{ width: sidebarWidth, flexShrink: 0 }} className="h-full">
         <Sidebar
           creators={creators}
           selectedCreatorId={selectedCreatorId}
@@ -275,6 +300,7 @@ function LibraryPanes({
         max={400}
         onDrag={setSidebarWidth}
         onCommit={w => updateSettings({ sidebar_width: w })}
+        paneRef={sidebarPaneRef}
       />
       {creatorTab === 'media' && selectedCreatorId ? (
         <MediaView
@@ -287,16 +313,17 @@ function LibraryPanes({
         />
       ) : (
       <>
-      <div style={{ width: postListWidth, flexShrink: 0 }} className="h-full">
+      <div ref={postListPaneRef} style={{ width: postListWidth, flexShrink: 0 }} className="h-full">
         <PostList
           posts={posts}
+          totalPosts={postsTotal}
+          page={page}
+          onPageChange={onPageChange}
           searchQuery={searchQuery}
           selectedPostId={selectedPost?.id || null}
           selectedCreator={creators.find(c => c.id === selectedCreatorId)}
           onShowMedia={() => onCreatorTabChange('media')}
           isSyncingPosts={syncingPosts && selectedCreatorId === syncingCreatorId}
-          syncProgress={syncProgress}
-          syncTotal={syncTotal}
           maxPosts={maxPosts}
           onMaxPostsChange={onMaxPostsChange}
           onSearch={onSearch}
@@ -346,6 +373,7 @@ function LibraryPanes({
         max={560}
         onDrag={setPostListWidth}
         onCommit={w => updateSettings({ post_list_width: w })}
+        paneRef={postListPaneRef}
       />
       <ReadingView
         post={selectedPost}
@@ -370,24 +398,31 @@ export function LibraryView() {
   // DownloadsView (mounted only while open).
   const { activeCount: downloadActiveCount, status: downloadStatus } = useDownloadSummary();
   const { unseenFailures } = useUnseenSyncFailures();
-  // A search result to open: remembered until the target creator's posts load,
-  // then resolved to the actual Post (the creator-change effect clears any prior
-  // selection first, so we can't set the post synchronously here).
-  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
   const [initialSettings, setInitialSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [creators, setCreators] = useState<(Creator & { post_count: number })[]>([]);
-  const [posts, setPosts] = useState<Post[]>([]);
+  // P1-5: the classic list holds only the current page (`pagePosts`) plus the
+  // total for the pager — the JS-side array is no longer the whole creator. The
+  // workbench's filmstrip is a separate, much lighter query owned by
+  // WorkbenchView itself (id/title/creator_id per post). A single full `posts`
+  // array served both, so every creator switch, filter change and settled search
+  // pulled the creator's entire post history over IPC.
+  const [pagePosts, setPagePosts] = useState<Post[]>([]);
+  const [postsTotal, setPostsTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  // Bumped by events that must refresh the list as it stands (a finished sync, a
+  // demo-mode flip) without moving it back to page 1.
+  const [reloadToken, setReloadToken] = useState(0);
   const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
   const [creatorTab, setCreatorTab] = useState<'posts' | 'media'>('posts');
   const [mediaOrder, setMediaOrder] = useState<'desc' | 'asc'>('desc');
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [selectedPostAssets, setSelectedPostAssets] = useState<Asset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  // Debounce the search term so the list query only fires after typing settles,
-  // not once per keystroke — the getPosts() payload (now body-trimmed via P0-2)
-  // is still a full-table scan on every fire. The input stays responsive: it
-  // reads `searchQuery` directly; only the *query trigger* waits on this value.
-  const debouncedSearch = useDebouncedValue(searchQuery, 200);
+  // The search box debounces inside PostList, where the input actually lives,
+  // so this only ever receives a settled term — typing no longer re-renders the
+  // root (and with it the sidebar, the reading pane and the filmstrip). It is
+  // still the trigger for the query effect below, and the SQL side is still a
+  // full-table scan per fire; P0-2 only trimmed the payload it returns.
   const [loading, setLoading] = useState(true);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notify = useNotify();
@@ -399,14 +434,10 @@ export function LibraryView() {
   const [syncingPosts, setSyncingPosts] = useState(false);
   const [syncingCreatorId, setSyncingCreatorId] = useState<string | null>(null);
   const [syncingSubscriptions, setSyncingSubscriptions] = useState(false);
-  // Comment backfill progress: null when idle, else {done,total} for the banner.
-  const [commentProgress, setCommentProgress] = useState<{ done: number; total: number } | null>(null);
   const [demoMode, setDemoMode] = useState(false);
   const [migratingImages, setMigratingImages] = useState(false);
   const [subscriptionSyncStatus, setSubscriptionSyncStatus] = useState<string>("");
   const [clearingCreatorId, setClearingCreatorId] = useState<string | null>(null);
-  const [syncProgress, setSyncProgress] = useState(0);
-  const [syncTotal, setSyncTotal] = useState(0);
   const [maxPosts, setMaxPosts] = useState(9999);
   const [syncingImagesCreatorId, setSyncingImagesCreatorId] = useState<string | null>(null);
   const [imageProgress, setImageProgress] = useState(0);
@@ -418,7 +449,6 @@ export function LibraryView() {
   const [imagesDoneCount, setImagesDoneCount] = useState(0);
   const [imageFailedCount, setImageFailedCount] = useState(0);
   const isImagesPausedRef = useRef(false);
-  const prevCreatorIdRef = useRef<string | null>(null);
   const demoModeInitialRender = useRef(true);
   // Always mirrors the current demoMode value, so async load functions can
   // re-check it after an await resolves — a plain closure over `demoMode`
@@ -434,6 +464,21 @@ export function LibraryView() {
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [distinctTiers, setDistinctTiers] = useState<number[]>([]);
+
+  /** Which posts the list is looking at. A stable identity per query, so it can
+   * drive both the loader effect and the workbench's own index fetch. Declared
+   * with the state it reads — the loader effects below depend on it. */
+  const postsFilter = useMemo<PostsFilterOptions>(() => (
+    showStarred
+      ? { starred: true, search: searchQuery }
+      : {
+          creatorId: selectedCreatorId ?? undefined,
+          search: searchQuery,
+          tierFilter,
+          dateFrom,
+          dateTo,
+        }
+  ), [showStarred, searchQuery, selectedCreatorId, tierFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     async function init() {
@@ -469,17 +514,19 @@ export function LibraryView() {
       await loadCreators();
       handleSyncSubscriptions();
     },
+    // Straight into the progress store, not into component state: a sync page's
+    // progress now repaints just the two widgets that print the numbers.
     "sync-progress": (payload: { current: number; total: number }) => {
-      setSyncProgress(payload.current);
-      if (payload.total > 0) {
-        setSyncTotal(payload.total);
-      }
+      updateSyncProgress(payload.current, payload.total);
     },
     "sync-complete": async (payload: { creator_id: string }) => {
       if (demoMode) return;
       console.log("Sync complete event received. Refreshing posts...");
       await loadCreators();
-      await loadPosts();
+      // Reload the posts that changed underneath: new posts land at the top of
+      // the newest-first order, and both layouts refresh off this token (the
+      // workbench's filmstrip index is its own query now, not a prop).
+      setReloadToken(n => n + 1);
       if (selectedCreatorId) {
         getDistinctTiersForCreator(selectedCreatorId).then(setDistinctTiers).catch(console.error);
       }
@@ -506,8 +553,10 @@ export function LibraryView() {
         action: { kind: 'open-downloads' },
       });
     },
+    // Same reasoning: the backfill reports twice a second for tens of minutes,
+    // and this used to repaint the whole library tree on each report.
     "comment-backfill-progress": (payload: { done: number; total: number }) => {
-      setCommentProgress({ done: payload.done, total: payload.total });
+      setCommentBackfillProgress(payload.done, payload.total);
     },
     "image-migration-active": (active: boolean) => {
       setMigratingImages(active);
@@ -525,25 +574,40 @@ export function LibraryView() {
     setSelectedCreatorId(null);
     setSelectedPost(null);
     loadCreators();
-    loadPosts();
+    // The filter effect below already reloads for the creator change; the token
+    // covers the case where the selection was already null and only demo mode
+    // flipped (nothing else in the query would have changed).
+    setReloadToken(t => t + 1);
   }, [demoMode]);
 
+  // A new query always starts at its first page. Changing the page number lives
+  // in its own effect below, so paging doesn't drop the open post the way
+  // switching creator or searching does.
   useEffect(() => {
-    if (!loading) {
-      loadPosts().catch(console.error);
-      setSelectedPost(null);
-    }
-    // `debouncedSearch` (not `searchQuery`) is the search trigger so typing
-    // doesn't fire a query per keystroke (P0-2). loadPosts reads the *live*
-    // searchQuery from its closure: by the time debouncedSearch settles the
-    // user has stopped typing, so the live value equals the settled one; and a
-    // creator switch fires this effect immediately via selectedCreatorId with
-    // the just-cleared live searchQuery, so there's no flash of stale-filtered
-    // results. searchQuery is intentionally not a dep — listing it would
-    // re-fire on every keystroke and defeat the debounce.
+    if (loading) return;
+    // Not while an open is in flight: that post belongs to this new query.
+    if (!postOpenInFlightRef.current) setSelectedPost(null);
+    setPage(1);
+    loadPosts(1).catch(console.error);
+    // `postsFilter` is a stable identity per query (it is rebuilt from the same
+    // six values the old deps list spelled out), and `searchQuery` is already the
+    // settled term — PostList debounces at the input (P0-2). `reloadToken` rides
+    // along for refreshes that leave the query alone (a demo-mode flip); those
+    // land on page 1 too, which is where new content is.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCreatorId, debouncedSearch, loading, showStarred, tierFilter, dateFrom, dateTo]);
+  }, [postsFilter, loading, reloadToken]);
 
+  // Paging within the current query. Page 1 is the effect above's job, so this
+  // one never double-loads on mount or after a reset.
+  useEffect(() => {
+    if (loading || page === 1) return;
+    loadPosts(page).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  // Safety net for the creator-change resets: every site that selects a creator
+  // also clears the filters synchronously (see clearFilters), so this only
+  // catches a stray setter. Values are already cleared, so it costs no render.
   useEffect(() => {
     setTierFilter(null);
     setDatePreset('all');
@@ -587,7 +651,22 @@ export function LibraryView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [downloadStatus]);
 
-  const handleDeleteCreator = async (id: string) => {
+  // Stable identity — it only reads a ref and a setter — for the handlers that
+  // depend on it (delete, subscription sync) and for the sidebar's prop.
+  const loadCreators = useCallback(async () => {
+    if (demoModeRef.current) {
+      setCreators(DEMO_CREATORS);
+      return;
+    }
+    const data = await getCreators();
+    if (demoModeRef.current) return; // mode flipped to demo while this was in flight — discard stale real data
+    setCreators(data);
+  }, []);
+
+  // Stable across unrelated re-renders — the identity only moves when the
+  // selection or a running image download changes, which is what lets the
+  // memoized sidebar rows skip.
+  const handleDeleteCreator = useCallback(async (id: string) => {
     if (demoMode) return;
     try {
       // Cancel any in-flight image download for this creator before deleting.
@@ -612,7 +691,18 @@ export function LibraryView() {
       console.error("Failed to delete creator:", e);
       throw e;
     }
-  };
+  }, [demoMode, loadCreators, selectedCreatorId, syncingImagesCreatorId]);
+
+  // Tier/date filters are persisted app-wide, so they must not follow the user
+  // onto a different creator's posts. Cleared wherever the creator changes — not
+  // only in the creator-change effect below, which commits a render too late for
+  // the query that render already kicked off.
+  const clearFilters = useCallback(() => {
+    setTierFilter(null);
+    setDatePreset('all');
+    setDateFrom(null);
+    setDateTo(null);
+  }, []);
 
   const handleTierChange = (v: number | null) => setTierFilter(v);
   const handleDatePresetChange = (preset: DatePreset) => setDatePreset(preset);
@@ -628,7 +718,8 @@ export function LibraryView() {
       await invoke("clear_creator_data", { creatorId: selectedCreatorId });
       setSelectedPost(null);
       setPostCheckpoint(null);
-      await loadPosts();
+      // The creator's posts are gone: reload the list and the workbench index.
+      setReloadToken(n => n + 1);
       await loadCreators();
     } catch (e) {
       console.error("Failed to clear creator data:", e);
@@ -689,7 +780,7 @@ export function LibraryView() {
     try {
       const ids = await getPostIdsForComments(creatorId, onlyMissing);
       if (ids.length === 0) return;
-      setCommentProgress({ done: 0, total: ids.length });
+      setCommentBackfillProgress(0, ids.length);
       await invoke<number>('fetch_comments_for_posts', { postIds: ids });
     } catch (e) {
       console.error('Comment backfill failed:', e);
@@ -701,7 +792,7 @@ export function LibraryView() {
         dedupeKey: `comment-fetch:${creatorId}`,
       });
     } finally {
-      setCommentProgress(null);
+      clearCommentBackfillProgress();
     }
   };
 
@@ -716,7 +807,7 @@ export function LibraryView() {
     try {
       const ids = await getAllPostIdsMissingComments();
       if (ids.length === 0) return;
-      setCommentProgress({ done: 0, total: ids.length });
+      setCommentBackfillProgress(0, ids.length);
       await invoke<number>('fetch_comments_for_posts', { postIds: ids });
       // This one runs for tens of minutes with nobody watching, so its result
       // is worth a notification even when it succeeds.
@@ -734,7 +825,7 @@ export function LibraryView() {
         dedupeKey: 'comment-backfill-all',
       });
     } finally {
-      setCommentProgress(null);
+      clearCommentBackfillProgress();
       // Reflect newly-cached comments in whatever post is open.
       if (selectedPost) loadAssets(selectedPost.id);
     }
@@ -747,8 +838,7 @@ export function LibraryView() {
 
     setSyncingPosts(true);
     setSyncingCreatorId(selectedCreatorId);
-    setSyncProgress(checkpoint ? checkpoint.posts_done : 0);
-    setSyncTotal(0);
+    beginSyncProgress(checkpoint ? checkpoint.posts_done : 0);
     try {
       await invoke<number>('scrape_creator_posts', {
         creatorUrl: creator.profile_url,
@@ -759,7 +849,9 @@ export function LibraryView() {
         // Only a fresh sync carries the toggle; resume leaves it unset (false).
         ...(checkpoint ? {} : { incremental: incrementalSync }),
       });
-      await loadPosts();
+      // Refresh both layouts off the token: the classic list reloads its page and
+      // the workbench its filmstrip index (which is no longer a prop).
+      setReloadToken(n => n + 1);
       await loadCreators();
       // Pull comments for the posts this sync brought in. Only the ones with no
       // cached comments, so a repeat sync doesn't refetch the whole archive; the
@@ -784,8 +876,7 @@ export function LibraryView() {
     } finally {
       setSyncingPosts(false);
       setSyncingCreatorId(null);
-      setSyncProgress(0);
-      setSyncTotal(0);
+      endSyncProgress();
     }
   };
 
@@ -848,21 +939,24 @@ export function LibraryView() {
     await invoke('cancel_image_download');
   };
 
-  const handleSelectCreator = (id: string | null) => {
+  // Both of these only touch setters, so their identity is stable for the life
+  // of the view — the memoized sidebar rows depend on that.
+  const handleSelectCreator = useCallback((id: string | null) => {
     setSelectedCreatorId(id);
     setCreatorTab('posts');
     setSearchQuery("");
     setShowStarred(false);
     setImageFailedCount(0);
-  };
+    clearFilters();
+  }, [clearFilters]);
 
   // "Starred" now opens the unified Favorites page (starred posts + favourited
   // images) rather than filtering the classic post list in place.
-  const handleSelectStarred = () => {
+  const handleSelectStarred = useCallback(() => {
     setShowStarred(false);
     setSelectedPost(null);
     setView('favorites');
-  };
+  }, []);
 
   const handleToggleStar = async (post: Post, newStarred: boolean) => {
     if (demoMode) return;
@@ -873,24 +967,19 @@ export function LibraryView() {
       return;
     }
     const updated = { ...post, is_starred: newStarred ? 1 : 0 };
-    setPosts(prev => showStarred && !newStarred
+    // Only the classic page rows and the open post render a star. In the
+    // workbench the filmstrip's index carries no is_starred (nothing there shows
+    // one), so `pagePosts` is empty and this is just the reading pane's badge.
+    setPagePosts(prev => showStarred && !newStarred
       ? prev.filter(p => p.id !== post.id)
       : prev.map(p => p.id === post.id ? updated : p)
     );
+    // Unstarring inside the starred query removes a row from the result set.
+    if (showStarred && !newStarred) setPostsTotal(n => Math.max(0, n - 1));
     if (selectedPost?.id === post.id) setSelectedPost(updated);
   };
 
-  async function loadCreators() {
-    if (demoModeRef.current) {
-      setCreators(DEMO_CREATORS);
-      return;
-    }
-    const data = await getCreators();
-    if (demoModeRef.current) return; // mode flipped to demo while this was in flight — discard stale real data
-    setCreators(data);
-  }
-
-  const handleSyncSubscriptions = async () => {
+  const handleSyncSubscriptions = useCallback(async () => {
     if (demoMode) return;
     if (syncingSubscriptions) return;
     setSyncingSubscriptions(true);
@@ -928,23 +1017,33 @@ export function LibraryView() {
       setSyncingSubscriptions(false);
       setTimeout(() => setSubscriptionSyncStatus(""), 8000);
     }
-  };
+  }, [demoMode, loadCreators, notify, syncingSubscriptions, t]);
 
-  async function loadPosts() {
-    const creatorChanged = prevCreatorIdRef.current !== selectedCreatorId;
-    prevCreatorIdRef.current = selectedCreatorId;
-    const effectiveTierFilter = creatorChanged ? null : tierFilter;
-    const effectiveDateFrom = creatorChanged ? null : dateFrom;
-    const effectiveDateTo = creatorChanged ? null : dateTo;
+  // Guards against a superseded load overwriting a newer one: a filter change
+  // while the list sits on page 3 commits a page-1 load in the same effect phase
+  // as the page-3 one it replaces, and creator switching has always been able to
+  // interleave two loads.
+  const postsLoadSeq = useRef(0);
+
+  // The classic list's page, loaded for the current query regardless of layout.
+  // Deliberate: the root can't see the live layout_mode (settings live inside the
+  // SettingsProvider this component renders), and one page + its COUNT is two
+  // bounded queries — far cheaper than the workbench having to reach back up for
+  // its filmstrip. The workbench's index is its own query inside WorkbenchView.
+  async function loadPosts(targetPage: number) {
+    const seq = ++postsLoadSeq.current;
     if (demoModeRef.current) {
-      setPosts(getDemoPosts(showStarred ? undefined : (selectedCreatorId ?? undefined), showStarred));
+      // Demo data is a local array, so pagination is simulated here rather than
+      // in SQL — same page shape, no IPC round trip.
+      const all = getDemoPosts(showStarred ? undefined : (selectedCreatorId ?? undefined), showStarred);
+      setPostsTotal(all.length);
+      setPagePosts(all.slice((targetPage - 1) * POSTS_PER_PAGE, targetPage * POSTS_PER_PAGE));
       return;
     }
-    const data = showStarred
-      ? await getPosts(undefined, searchQuery, true)
-      : await getPosts(selectedCreatorId ?? undefined, searchQuery, false, effectiveTierFilter, effectiveDateFrom, effectiveDateTo);
-    if (demoModeRef.current) return;
-    setPosts(data);
+    const { posts: rows, total } = await getPostsPage(postsFilter, (targetPage - 1) * POSTS_PER_PAGE, POSTS_PER_PAGE);
+    if (seq !== postsLoadSeq.current || demoModeRef.current) return;
+    setPagePosts(rows);
+    setPostsTotal(total);
   }
 
   async function loadAssets(postId: string) {
@@ -957,34 +1056,63 @@ export function LibraryView() {
     setSelectedPostAssets(data);
   }
 
-  // Once a search result's creator is selected and its posts have loaded, open
-  // the specific post it pointed at.
-  useEffect(() => {
-    if (!pendingPostId) return;
-    const post = posts.find(p => p.id === pendingPostId);
-    if (post) {
-      setSelectedPost(post);
-      setPendingPostId(null);
-    }
-  }, [posts, pendingPostId]);
+  // Opening a post resolves it by id instead of searching a loaded array: the
+  // target may not be in the current page, and in the workbench layout the list
+  // is only an index. Both entry points share one sequence so the newest
+  // selection wins — holding ← in the filmstrip fires a getPostById per keypress
+  // and the responses can land out of order (P1-5); a synchronous click also
+  // invalidates any async open still in flight.
+  const selectedPostSeq = useRef(0);
+  // True while a getPostById is resolving. The query effect below clears the
+  // selection on a query change (switching creator closes the old post), but an
+  // open that was requested in the same tick belongs to the *new* query — e.g. a
+  // ⌘K jump changes the creator and asks for a post, and the reset would
+  // otherwise wipe the post the moment it arrived.
+  const postOpenInFlightRef = useRef(false);
+  const selectPost = useCallback((post: Post) => {
+    selectedPostSeq.current++;
+    postOpenInFlightRef.current = false;
+    setSelectedPost(post);
+  }, []);
+  const selectPostById = useCallback((postId: string) => {
+    const seq = ++selectedPostSeq.current;
+    postOpenInFlightRef.current = true;
+    getPostById(postId)
+      .then(post => {
+        if (seq !== selectedPostSeq.current) return;
+        postOpenInFlightRef.current = false;
+        if (post) setSelectedPost(post);
+      })
+      .catch(e => {
+        postOpenInFlightRef.current = false;
+        console.error('Failed to open post:', e);
+      });
+  }, []);
 
-  // Navigate to a specific post: select its creator and remember the post id;
-  // the resolver effect above opens it once that creator's posts have loaded.
+  // Navigate to a specific post from outside the list (search result, favourites
+  // list, timeline, palette): select its creator, then open the post itself.
   const handleOpenPost = (creatorId: string, postId: string) => {
     setShowStarred(false);
     setSearchQuery("");
+    clearFilters();
     setSelectedCreatorId(creatorId);
-    setPendingPostId(postId);
     setView('library');
+    selectPostById(postId);
   };
 
   const handleOpenSearchResult = (result: SearchResult) => handleOpenPost(result.creator_id, result.post_id);
 
-  const handleOpenSettings = () => {
+  const handleOpenSettings = useCallback(() => {
     // Land directly on Sync History when there are unseen sync failures.
     setSettingsInitialSection(unseenFailures > 0 ? 'history' : 'account');
     setView('settings');
-  };
+  }, [unseenFailures]);
+
+  // These three go into the rail/sidebar as props, so they need stable
+  // identities for the memoized rail to hold.
+  const handleOpenDownloads = useCallback(() => setView('downloads'), []);
+  const handleOpenSearch = useCallback(() => setView('search'), []);
+  const handleOpenNotifications = useCallback(() => setNotificationsOpen(o => !o), []);
 
   // ⌘K / Ctrl-K opens the command palette from anywhere.
   useEffect(() => {
@@ -1020,9 +1148,19 @@ export function LibraryView() {
   const handlePaletteSelectCreator = (id: string) => {
     setShowStarred(false);
     setSearchQuery("");
+    clearFilters();
     setSelectedCreatorId(id);
     setView('library');
   };
+
+  // Resolve a creator id to its display name. Built once per creators change
+  // instead of a fresh arrow per render: DownloadsView's rows are memoised, and
+  // an unstable `creatorName` prop re-rendered every row on every progress event
+  // — the lookup itself was an O(creators) `find` per row, per render.
+  const creatorNameById = useMemo(() => {
+    const map = new Map(creators.map(c => [c.id, c.name]));
+    return (id: string) => map.get(id) ?? id;
+  }, [creators]);
 
   if (loading) {
     return (
@@ -1052,11 +1190,7 @@ export function LibraryView() {
           onSelectCreator={handlePaletteSelectCreator}
           onOpenPost={handleOpenSearchResult}
         />
-        {commentProgress && (
-          <div className="w-full bg-secondary text-secondary-foreground text-xs text-center py-1 flex-shrink-0 tabular-nums">
-            {t.comments.backfillProgress(commentProgress.done, commentProgress.total)}
-          </div>
-        )}
+        <CommentBackfillBanner />
         {syncingSubscriptions && (
           <div className="w-full bg-blue-600 text-white text-sm text-center py-1.5 flex-shrink-0">
             {t.sidebar.syncBannerWarning}
@@ -1073,7 +1207,7 @@ export function LibraryView() {
         ) : view === 'downloads' ? (
           <DownloadsView
             onClose={() => setView('library')}
-            creatorName={(id) => creators.find(c => c.id === id)?.name ?? id}
+            creatorName={creatorNameById}
           />
         ) : view === 'search' ? (
           <SearchView
@@ -1083,7 +1217,12 @@ export function LibraryView() {
         ) : (
           <LibraryPanes
             creators={creators}
-            posts={posts}
+            posts={pagePosts}
+            postsTotal={postsTotal}
+            page={page}
+            onPageChange={setPage}
+            postsFilter={postsFilter}
+            reloadToken={reloadToken}
             selectedCreatorId={selectedCreatorId}
             selectedPost={selectedPost}
             selectedPostAssets={selectedPostAssets}
@@ -1099,12 +1238,13 @@ export function LibraryView() {
             onCreatorsUpdated={loadCreators}
             onDeleteCreator={handleDeleteCreator}
             onSelectStarred={handleSelectStarred}
-            onSelectPost={setSelectedPost}
+            onSelectPost={selectPost}
+            onSelectPostById={selectPostById}
             onOpenPost={handleOpenPost}
             onClearData={handleClearData}
             onToggleStar={handleToggleStar}
             postSync={{
-              syncingPosts, syncingCreatorId, syncProgress, syncTotal, maxPosts,
+              syncingPosts, syncingCreatorId, maxPosts,
               syncMode, incrementalSync, postCheckpoint,
               onSyncPosts: handleSyncPosts,
               onPausePosts: handlePausePosts,
@@ -1133,10 +1273,10 @@ export function LibraryView() {
             }}
             nav={{
               onOpenSettings: handleOpenSettings,
-              onOpenDownloads: () => setView('downloads'),
-              onOpenSearch: () => setView('search'),
+              onOpenDownloads: handleOpenDownloads,
+              onOpenSearch: handleOpenSearch,
               onOpenFavorites: handleSelectStarred,
-              onOpenNotifications: () => setNotificationsOpen(o => !o),
+              onOpenNotifications: handleOpenNotifications,
               downloadActiveCount,
               downloadStatus,
               settingsErrorCount: unseenFailures,

@@ -4,11 +4,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Settings, DownloadCloud, Loader2, Search, Pin, GripVertical, Star, Bell } from "lucide-react";
-import { useNotifications } from "../notifications/NotificationContext";
+import { useUnreadCount } from "../notifications/NotificationContext";
 import { DownloadStatusIcon } from "../downloads/DownloadStatusIcon";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -48,7 +48,13 @@ interface SidebarProps {
   demoMode?: boolean;
 }
 
-function SortableCreatorItem({
+/**
+ * A pinned creator row (draggable). Memoized: the creator objects, the
+ * callbacks and `t` all keep their identity while the selection moves, so a
+ * click re-renders the two rows whose `selected` flag flipped rather than the
+ * whole list.
+ */
+const SortableCreatorItem = memo(function SortableCreatorItem({
   creator,
   selected,
   onSelect,
@@ -96,9 +102,15 @@ function SortableCreatorItem({
       </ContextMenu>
     </div>
   );
-}
+});
 
-function CreatorItem({
+/**
+ * An unpinned creator row, carrying its own delete-confirmation dialog.
+ * Memoized for the same reason as SortableCreatorItem — without it, selecting a
+ * creator rebuilds every row's Radix context-menu + dialog tree, which is the
+ * sidebar's dominant render cost.
+ */
+const CreatorItem = memo(function CreatorItem({
   creator,
   selected,
   onSelect,
@@ -175,7 +187,7 @@ function CreatorItem({
       </Dialog>
     </>
   );
-}
+});
 
 export function Sidebar({
   creators, selectedCreatorId, onSelectCreator, onCreatorsUpdated, onDeleteCreator, onOpenSettings,
@@ -184,21 +196,65 @@ export function Sidebar({
   demoMode = false,
 }: SidebarProps) {
   const t = useTranslation();
-  const { unreadCount } = useNotifications();
+  // Only the badge count, not the notification log: the log's toast tick runs
+  // four times a second and would repaint the whole sidebar with it.
+  const unreadCount = useUnreadCount();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterType>('all');
 
-  const handleTogglePin = async (creator: Creator & { post_count: number }) => {
+  // Unsubscribed creators must NOT vanish from the default view — they stay
+  // listed (dimmed + tagged) so a partial scrape or a real cancellation never
+  // looks like data loss. Only `free`/`paid` narrow to subscribed-of-tier;
+  // `unsubscribed` isolates just the unsubscribed ones.
+  //
+  // The filter + name search fold into one memoized pass: this chain used to
+  // re-run — including a toLowerCase per creator per comparison — on every
+  // render, and the sidebar renders on the path of every root state change.
+  const visibleCreators = useMemo(() => {
+    const term = search.toLowerCase();
+    return creators.filter(c => {
+      const subscribed = Boolean(c.is_subscribed);
+      if (filter === 'free' && !(subscribed && c.subscription_type === 'free')) return false;
+      if (filter === 'paid' && !(subscribed && c.subscription_type === 'paid')) return false;
+      if (filter === 'unsubscribed' && subscribed) return false;
+      if (term && !c.name.toLowerCase().includes(term)) return false;
+      return true;
+    });
+  }, [creators, filter, search]);
+
+  // Pinned creators also float paid-subscribed ones to the top, but preserve
+  // the user's manual drag order (pin_order) as the tiebreak WITHIN each group
+  // — so paid creators rise above non-paid within the pinned section without
+  // scrambling the manual reordering the user did.
+  const pinnedCreators = useMemo(
+    () => sortCreatorsByPaidFirst(
+      visibleCreators.filter(c => Boolean(c.is_pinned)),
+      (a, b) => a.pin_order - b.pin_order,
+    ),
+    [visibleCreators],
+  );
+
+  const normalCreators = useMemo(
+    () => sortCreatorsByPaidFirst(visibleCreators.filter(c => !Boolean(c.is_pinned))),
+    [visibleCreators],
+  );
+
+  const pinnedIds = useMemo(() => pinnedCreators.map(c => c.id), [pinnedCreators]);
+
+  // Stable handler identities are what let the memoized rows above actually
+  // skip: the creator objects and `t` are stable too, so an unrelated root
+  // re-render costs one comparison per row instead of a full rebuild.
+  const handleTogglePin = useCallback(async (creator: Creator & { post_count: number }) => {
     if (demoMode) return;
     await invoke('set_creator_pinned', { id: creator.id, pinned: !Boolean(creator.is_pinned) });
     onCreatorsUpdated();
-  };
+  }, [demoMode, onCreatorsUpdated]);
 
-  const handleDeleteCreator = async (creator: Creator & { post_count: number }) => {
+  const handleDeleteCreator = useCallback(async (creator: Creator & { post_count: number }) => {
     await onDeleteCreator(creator.id);
-  };
+  }, [onDeleteCreator]);
 
-  const handleDragEnd = async (event: DragEndEvent) => {
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     if (demoMode) return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -209,20 +265,7 @@ export function Sidebar({
     const reordered = arrayMove(snapshot, oldIndex, newIndex);
     await invoke('reorder_pinned_creators', { ids: reordered.map(c => c.id) });
     onCreatorsUpdated();
-  };
-
-  // Unsubscribed creators must NOT vanish from the default view — they stay
-  // listed (dimmed + tagged) so a partial scrape or a real cancellation never
-  // looks like data loss. Only `free`/`paid` narrow to subscribed-of-tier;
-  // `unsubscribed` isolates just the unsubscribed ones.
-  const filterCreators = (c: Creator & { post_count: number }) => {
-    const subscribed = Boolean(c.is_subscribed);
-    if (filter === 'all') return true;
-    if (filter === 'free') return subscribed && c.subscription_type === 'free';
-    if (filter === 'paid') return subscribed && c.subscription_type === 'paid';
-    if (filter === 'unsubscribed') return !subscribed;
-    return false;
-  };
+  }, [demoMode, pinnedCreators, onCreatorsUpdated]);
 
   const FILTER_TABS: { key: FilterType; label: string }[] = [
     { key: 'all', label: t.sidebar.filterAll },
@@ -230,23 +273,6 @@ export function Sidebar({
     { key: 'paid', label: t.sidebar.filterPaid },
     { key: 'unsubscribed', label: t.sidebar.filterUnsubscribed },
   ];
-
-  const visibleCreators = creators
-    .filter(filterCreators)
-    .filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
-
-  // Pinned creators also float paid-subscribed ones to the top, but preserve
-  // the user's manual drag order (pin_order) as the tiebreak WITHIN each group
-  // — so paid creators rise above non-paid within the pinned section without
-  // scrambling the manual reordering the user did.
-  const pinnedCreators = sortCreatorsByPaidFirst(
-    visibleCreators.filter(c => Boolean(c.is_pinned)),
-    (a, b) => a.pin_order - b.pin_order,
-  );
-
-  const normalCreators = sortCreatorsByPaidFirst(
-    visibleCreators.filter(c => !Boolean(c.is_pinned))
-  );
 
   return (
     <div className="w-full bg-sidebar flex flex-col h-full">
@@ -311,7 +337,7 @@ export function Sidebar({
                 {t.sidebar.pinnedHeading(pinnedCreators.length)}
               </div>
               <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={pinnedCreators.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                <SortableContext items={pinnedIds} strategy={verticalListSortingStrategy}>
                   {pinnedCreators.map(creator => (
                     <SortableCreatorItem
                       key={creator.id}

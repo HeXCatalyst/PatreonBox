@@ -48,6 +48,14 @@ export function ImageGallery({ assets, downloadedImages, totalCount, onOpenLight
 
   const getAssetUrl = useCallback((asset: Asset) => assetUrl(imagesDir, asset), [imagesDir]);
 
+  // Map<id, index> for O(1) lightbox-index lookup instead of per-render
+  // downloadedImages.findIndex(...) which is O(n) per image → O(n²) total.
+  const downloadedIndexMap = useMemo(() => {
+    const m = new Map<string, number>();
+    downloadedImages.forEach((a, i) => m.set(a.id, i));
+    return m;
+  }, [downloadedImages]);
+
   const handleSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10);
     setRowH(val);
@@ -108,7 +116,7 @@ export function ImageGallery({ assets, downloadedImages, totalCount, onOpenLight
             <div key={ri} className="flex" style={{ gap: `${GAP}px`, height: h }}>
               {r.items.map(({ a: asset, asp }) => {
                 const downloaded = asset.downloaded_at !== null;
-                const lightboxIdx = downloaded ? downloadedImages.findIndex(x => x.id === asset.id) : -1;
+                const lightboxIdx = downloaded ? (downloadedIndexMap.get(asset.id) ?? -1) : -1;
                 const w = h * asp;
                 if (downloaded) {
                   return (
@@ -117,6 +125,7 @@ export function ImageGallery({ assets, downloadedImages, totalCount, onOpenLight
                         src={getAssetUrl(asset) ?? undefined}
                         alt={asset.file_name}
                         className="w-full h-full object-cover cursor-pointer"
+                        loading="lazy"
                         decoding="async"
                         onLoad={e => {
                           const el = e.currentTarget;

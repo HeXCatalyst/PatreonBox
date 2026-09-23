@@ -36,19 +36,26 @@ pub fn record_migration_start(
 ) -> Option<i64> {
     let conn = open_db(app).ok()?;
     let now = chrono::Utc::now().to_rfc3339();
+    // The reap + the new 'running' row go in one transaction, so a crash between
+    // them can't leave the history without a record of the migration that is
+    // actually starting. Tolerance is unchanged: every failure still just returns
+    // None, so a migration never fails because its history row couldn't be
+    // written (an aborted transaction rolls back on drop).
+    let tx = conn.unchecked_transaction().ok()?;
     // Reap any orphaned 'running' row from a previous process that died mid-
     // migration. (The `setup` hook also does this on launch; this covers the
     // theoretical case of a second migration starting in the same process after
     // a panic that somehow didn't unwind the lock — defensive, not expected.)
-    let _ = conn.execute(
+    let _ = tx.execute(
         "UPDATE image_migrations SET status='failed', finished_at=?1, error='进程中断' WHERE status='running'",
         rusqlite::params![now],
     );
-    conn.execute(
+    tx.execute(
         "INSERT INTO image_migrations (started_at, source_dir, target_dir, is_restore, verify_mode, status)
          VALUES (?1, ?2, ?3, ?4, ?5, 'running')",
         rusqlite::params![now, source_dir, target_dir, is_restore as i64, verify_mode],
     ).ok()?;
+    tx.commit().ok()?;
     conn.last_insert_rowid().into()
 }
 
@@ -105,7 +112,10 @@ pub fn cleanup_orphan_runs(app: &AppHandle) {
     }
 }
 
-#[tauri::command]
+// Every command in this file is pure DB work (plus a thread-safe `emit`), so
+// each runs on the blocking threadpool instead of inline on the main thread
+// (`async` on a non-async fn = "sync_threadpool" in Tauri v2, no signature change).
+#[tauri::command(async)]
 pub fn get_migration_history(app: AppHandle, limit: Option<i64>) -> Result<Vec<MigrationRecord>, String> {
     let conn = open_db(&app)?;
     let limit = limit.unwrap_or(50).clamp(1, 500);
@@ -137,7 +147,7 @@ pub fn get_migration_history(app: AppHandle, limit: Option<i64>) -> Result<Vec<M
 
 /// Most-recent migration record (any status), for the Storage page's "last
 /// migration" summary card. None if there's never been one.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_last_migration(app: AppHandle) -> Result<Option<MigrationRecord>, String> {
     let conn = open_db(&app)?;
     conn.query_row(
@@ -169,7 +179,7 @@ pub fn get_last_migration(app: AppHandle) -> Result<Option<MigrationRecord>, Str
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_migration_history(app: AppHandle) -> Result<(), String> {
     let conn = open_db(&app)?;
     // Keep 'running' rows (shouldn't exist post-cleanup, but defensive) so a live
