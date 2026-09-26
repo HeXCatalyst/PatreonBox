@@ -24,13 +24,13 @@ pub fn asset_full_path(app: &AppHandle, local_path: &str) -> Result<std::path::P
     Ok(images_dir(app)?.join(rel))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resolve_app_data_dir(app: AppHandle) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(app_data_dir.to_string_lossy().to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resolve_images_dir(app: AppHandle) -> Result<String, String> {
     Ok(images_dir(&app)?.to_string_lossy().to_string())
 }
@@ -74,65 +74,87 @@ pub async fn save_asset_to_downloads(app: AppHandle, local_path: String) -> Resu
     .map_err(|e| format!("save to downloads task failed: {}", e))?
 }
 
-#[tauri::command]
-pub fn clear_creator_data(app: AppHandle, creator_id: String) -> Result<(), String> {
+#[tauri::command(async)]
+pub async fn clear_creator_data(app: AppHandle, creator_id: String) -> Result<(), String> {
     super::image_migration::check_not_migrating(&app)?;
-    // Delete all scraped posts (assets and post_tags cascade via FK ON DELETE CASCADE).
-    // Also clear the sync checkpoint so the UI resets to a clean "Sync" button
-    // rather than showing a stale "继续 N/..." from the previous session.
-    // The creators row is intentionally kept so the creator stays in the sidebar
-    // and can be re-synced without re-adding.
-    let conn = open_db(&app)?;
-    conn.execute(
-        "DELETE FROM posts WHERE creator_id = ?1",
-        rusqlite::params![creator_id],
-    ).map_err(|e| format!("DB error: {}", e))?;
-    conn.execute(
-        "DELETE FROM sync_checkpoints WHERE creator_id = ?1",
-        rusqlite::params![creator_id],
-    ).map_err(|e| format!("DB error clearing checkpoint: {}", e))?;
+    // The cascading DELETEs (assets/post_tags, ~10k rows) and the remove_dir_all
+    // over tens of thousands of image files would freeze the UI if run on the
+    // main thread. The migration check above is cheap (one AtomicBool read) so it
+    // stays here; the heavy DB + FS work moves to a blocking pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        // Delete all scraped posts (assets and post_tags cascade via FK ON DELETE CASCADE).
+        // Also clear the sync checkpoint so the UI resets to a clean "Sync" button
+        // rather than showing a stale "继续 N/..." from the previous session.
+        // The creators row is intentionally kept so the creator stays in the sidebar
+        // and can be re-synced without re-adding.
+        let conn = open_db(&app)?;
+        // One transaction for both DELETEs: an interrupted run must not leave the
+        // posts deleted but the checkpoint stale (the UI would then resume from a
+        // cursor pointing into an empty post table).
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM posts WHERE creator_id = ?1",
+            rusqlite::params![creator_id],
+        ).map_err(|e| format!("DB error: {}", e))?;
+        tx.execute(
+            "DELETE FROM sync_checkpoints WHERE creator_id = ?1",
+            rusqlite::params![creator_id],
+        ).map_err(|e| format!("DB error clearing checkpoint: {}", e))?;
+        tx.commit().map_err(|e| e.to_string())?;
 
-    // Remove the images directory for this creator if it exists.
-    // File-delete failure is non-fatal: DB is already clean, so the app won't
-    // reference these files again. Orphaned files only waste disk space.
-    let creator_images_dir = images_dir(&app)?.join(&creator_id);
-    if creator_images_dir.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&creator_images_dir) {
-            eprintln!("WARN: Could not remove image dir for creator {}: {}", creator_id, e);
+        // Remove the images directory for this creator if it exists.
+        // File-delete failure is non-fatal: DB is already clean, so the app won't
+        // reference these files again. Orphaned files only waste disk space.
+        let creator_images_dir = images_dir(&app)?.join(&creator_id);
+        if creator_images_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&creator_images_dir) {
+                eprintln!("WARN: Could not remove image dir for creator {}: {}", creator_id, e);
+            }
         }
-    }
 
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("clear creator data task failed: {}", e))?
 }
 
-#[tauri::command]
-pub fn delete_creator(app: AppHandle, creator_id: String) -> Result<(), String> {
+#[tauri::command(async)]
+pub async fn delete_creator(app: AppHandle, creator_id: String) -> Result<(), String> {
     super::image_migration::check_not_migrating(&app)?;
-    let mut conn = open_db(&app)?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    tx.execute(
-        "DELETE FROM posts WHERE creator_id = ?1",
-        rusqlite::params![creator_id],
-    ).map_err(|e| format!("DB error deleting posts: {}", e))?;
-    tx.execute(
-        "DELETE FROM sync_checkpoints WHERE creator_id = ?1",
-        rusqlite::params![creator_id],
-    ).map_err(|e| format!("DB error deleting checkpoint: {}", e))?;
-    tx.execute(
-        "DELETE FROM creators WHERE id = ?1",
-        rusqlite::params![creator_id],
-    ).map_err(|e| format!("DB error deleting creator: {}", e))?;
-    tx.commit().map_err(|e| e.to_string())?;
+    // Same reasoning as clear_creator_data: the cascading DELETEs plus the
+    // remove_dir_all over the creator's images run off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_db(&app)?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM posts WHERE creator_id = ?1",
+            rusqlite::params![creator_id],
+        ).map_err(|e| format!("DB error deleting posts: {}", e))?;
+        tx.execute(
+            "DELETE FROM sync_checkpoints WHERE creator_id = ?1",
+            rusqlite::params![creator_id],
+        ).map_err(|e| format!("DB error deleting checkpoint: {}", e))?;
+        tx.execute(
+            "DELETE FROM creators WHERE id = ?1",
+            rusqlite::params![creator_id],
+        ).map_err(|e| format!("DB error deleting creator: {}", e))?;
+        tx.commit().map_err(|e| e.to_string())?;
 
-    let creator_images_dir = images_dir(&app)?.join(&creator_id);
-    if creator_images_dir.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&creator_images_dir) {
-            eprintln!("WARN: Could not remove image dir for creator {}: {}", creator_id, e);
+        let creator_images_dir = images_dir(&app)?.join(&creator_id);
+        if creator_images_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&creator_images_dir) {
+                eprintln!("WARN: Could not remove image dir for creator {}: {}", creator_id, e);
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("delete creator task failed: {}", e))?
 }
 
+/// Deliberately left on the main thread: `tauri_plugin_opener::open_path` is a
+/// shell/UI-open call (it hands the file to the OS), so it keeps the plain
+/// synchronous command form rather than moving to the threadpool.
 #[tauri::command]
 pub fn open_asset_in_system(app: AppHandle, local_path: String) -> Result<(), String> {
     super::image_migration::check_not_migrating(&app)?;
@@ -164,44 +186,61 @@ pub async fn delete_downloaded_assets(app: AppHandle, asset_ids: Vec<String>) ->
         };
 
         let conn = open_db(&app)?;
-        let mut cleared = 0usize;
-        for id in &asset_ids {
-            // Look up the file path, delete the file, then clear the download state.
-            let local_path: Option<String> = conn
-                .query_row("SELECT local_path FROM assets WHERE id = ?1", rusqlite::params![id], |r| r.get(0))
-                .ok();
-            if let Some(lp) = local_path {
-                if let Ok(full) = asset_full_path(&app, &lp) {
-                    if full.exists() {
-                        if to_trash {
-                            // Fall back to a permanent delete if the file can't be trashed.
-                            if trash::delete(&full).is_err() { let _ = fs::remove_file(&full); }
-                        } else {
-                            let _ = fs::remove_file(&full);
-                        }
+
+        // Phase 1 — read: resolve every asset's path up front, so no DB statement
+        // is left to run while files are being deleted below.
+        let local_paths: Vec<Option<String>> = asset_ids
+            .iter()
+            .map(|id| {
+                conn.query_row("SELECT local_path FROM assets WHERE id = ?1", rusqlite::params![id], |r| r.get(0))
+                    .ok()
+            })
+            .collect();
+
+        // Phase 2 — files: delete (or trash) the originals and their thumbnails
+        // with no transaction open, so a slow HDD/trash round-trip never holds
+        // SQLite's write lock.
+        for local_path in &local_paths {
+            let Some(lp) = local_path else { continue };
+            if let Ok(full) = asset_full_path(&app, lp) {
+                if full.exists() {
+                    if to_trash {
+                        // Fall back to a permanent delete if the file can't be trashed.
+                        if trash::delete(&full).is_err() { let _ = fs::remove_file(&full); }
+                    } else {
+                        let _ = fs::remove_file(&full);
                     }
                 }
-                // 同时删缩略图（若存在），不留孤儿
-                if super::thumbnails::is_image_filename(&lp.clone().rsplit('/').next().unwrap_or("")) {
-                    if let Ok(images_root) = images_dir(&app) {
-                        if let Some(thumb) = super::thumbnails::thumb_path(&images_root, &lp) {
-                            if thumb.exists() {
-                                if to_trash {
-                                    if trash::delete(&thumb).is_err() { let _ = fs::remove_file(&thumb); }
-                                } else {
-                                    let _ = fs::remove_file(&thumb);
-                                }
+            }
+            // 同时删缩略图（若存在），不留孤儿
+            if super::thumbnails::is_image_filename(&lp.clone().rsplit('/').next().unwrap_or("")) {
+                if let Ok(images_root) = images_dir(&app) {
+                    if let Some(thumb) = super::thumbnails::thumb_path(&images_root, lp) {
+                        if thumb.exists() {
+                            if to_trash {
+                                if trash::delete(&thumb).is_err() { let _ = fs::remove_file(&thumb); }
+                            } else {
+                                let _ = fs::remove_file(&thumb);
                             }
                         }
                     }
                 }
             }
-            let _ = conn.execute(
+        }
+
+        // Phase 3 — DB: clear every row's download state in ONE short write
+        // transaction, so N selected assets are one WAL commit instead of N.
+        // An individual UPDATE's error is ignored, as before.
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let mut cleared = 0usize;
+        for id in &asset_ids {
+            let _ = tx.execute(
                 "UPDATE assets SET downloaded_at = NULL, byte_size = NULL, download_error = NULL WHERE id = ?1",
                 rusqlite::params![id],
             );
             cleared += 1;
         }
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(cleared)
     })
     .await
@@ -214,7 +253,7 @@ pub async fn delete_downloaded_assets(app: AppHandle, asset_ids: Vec<String>) ->
 /// same image-URL-resolution path real assets use. Idempotent: skips any
 /// file that's already present, safe to call every time Demo Mode is
 /// switched on.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ensure_demo_assets_on_disk(app: AppHandle) -> Result<(), String> {
     let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let images_root = images_dir(&app)?;

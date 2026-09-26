@@ -2,6 +2,13 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use super::util::{close_window, open_db};
 
+const SINGLE_COMMENT_WINDOW: &str = "single-comment-scraper";
+const BULK_COMMENT_WINDOW: &str = "comment-scraper";
+// Each worker has one shared result buffer. Serialize its callers before
+// resetting that buffer or touching its window; single and bulk stay independent.
+static SINGLE_COMMENT_FETCH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static BULK_COMMENT_FETCH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Filled by `report_post_comments` (from the webview), drained by `fetch_post_comments`.
 pub struct PostCommentsRawState(pub std::sync::Mutex<Option<Vec<serde_json::Value>>>);
 
@@ -142,9 +149,10 @@ fn campaign_id_for_post(conn: &rusqlite::Connection, post_id: &str) -> Option<St
 /// reads it, follows `links.next`, and reports the pages back for parsing.
 #[tauri::command]
 pub async fn fetch_post_comments(app: AppHandle, post_id: String) -> Result<usize, String> {
+    let _fetch_guard = SINGLE_COMMENT_FETCH.lock().await;
     // Close any lingering scraper window from a previous fetch (avoids a
     // "label already exists" collision) and reset the handoff slot.
-    close_window(&app, "comment-scraper");
+    close_window(&app, SINGLE_COMMENT_WINDOW);
     {
         let state = app.state::<PostCommentsRawState>();
         *state.0.lock().map_err(|e| e.to_string())? = None;
@@ -200,7 +208,7 @@ pub async fn fetch_post_comments(app: AppHandle, post_id: String) -> Result<usiz
 
     let _window = WebviewWindowBuilder::new(
         &app,
-        "comment-scraper",
+        SINGLE_COMMENT_WINDOW,
         WebviewUrl::External(api_url.parse().map_err(|e: url::ParseError| e.to_string())?),
     )
     .title("Fetching comments…")
@@ -222,14 +230,39 @@ pub async fn fetch_post_comments(app: AppHandle, post_id: String) -> Result<usiz
             let mut data = state.0.lock().map_err(|e| e.to_string())?;
             if data.is_some() { pages = data.take(); break; }
         }
-        if app.get_webview_window("comment-scraper").is_none() { break; }
+        if app.get_webview_window(SINGLE_COMMENT_WINDOW).is_none() { break; }
     }
-    close_window(&app, "comment-scraper");
+    close_window(&app, SINGLE_COMMENT_WINDOW);
 
     let pages = pages.ok_or_else(|| "Timed out fetching comments".to_string())?;
 
     let conn = open_db(&app)?;
-    Ok(save_comment_pages(&conn, &post_id, &pages))
+    save_comment_pages(&conn, &post_id, &pages)
+}
+
+/// Empty `data` is a valid cached result. Missing data, error responses, or a
+/// remaining next page mean the fetch did not finish; never mark those complete.
+fn validate_comment_pages(pages: &[serde_json::Value]) -> Result<(), String> {
+    if pages.is_empty() {
+        return Err("No valid comment response received".into());
+    }
+    for page in pages {
+        let data = page.get("data").and_then(|v| v.as_array())
+            .ok_or("Invalid comment response")?;
+        if page.get("errors").is_some()
+            || data.iter().any(|item| {
+                item.get("type").and_then(|v| v.as_str()) != Some("comment")
+                    || item.get("id").and_then(|v| v.as_str()).map_or(true, str::is_empty)
+            })
+        {
+            return Err("Invalid comment response".into());
+        }
+    }
+    let next = pages.last().and_then(|page| page.get("links")).and_then(|v| v.get("next"));
+    if next.is_some_and(|value| !value.is_null()) {
+        return Err("Comment pagination did not finish; retry this post".into());
+    }
+    Ok(())
 }
 
 /// Parse one post's API pages and replace its cached comments. Returns how many
@@ -241,7 +274,8 @@ fn save_comment_pages(
     conn: &rusqlite::Connection,
     post_id: &str,
     pages: &[serde_json::Value],
-) -> usize {
+) -> Result<usize, String> {
+    validate_comment_pages(pages)?;
     // Which campaign counts as "the author" for this post.
     let campaign_id = campaign_id_for_post(conn, post_id);
     let mut rows: HashMap<String, Row> = HashMap::new();
@@ -285,26 +319,27 @@ fn save_comment_pages(
         }
     }
 
-    // An empty result means "this post genuinely has no comments" — but so does a
-    // failed fetch, and wiping a good cache on a transient failure would lose
-    // data. Only clear when there's something to replace it with.
-    if rows.is_empty() {
-        return 0;
-    }
-
     let now = chrono::Utc::now().to_rfc3339();
-    let _ = conn.execute("DELETE FROM comments WHERE post_id = ?1", rusqlite::params![post_id]);
-    let mut count = 0usize;
+    // Cache replacement and completion marker commit together, including a
+    // genuinely empty cache. Any write/commit failure preserves the old data.
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM comments WHERE post_id = ?1", [post_id])
+        .map_err(|e| e.to_string())?;
     for r in rows.values() {
-        let res = conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO comments
                (id, post_id, parent_id, author_name, author_id, body, published_at, reply_count, fetched_at, is_author, author_url)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             rusqlite::params![r.id, post_id, r.parent_id, r.author_name, r.author_id, r.body, r.published_at, r.reply_count, now, r.is_author as i32, r.author_url],
-        );
-        if res.is_ok() { count += 1; }
+        ).map_err(|e| e.to_string())?;
     }
-    count
+    let updated = tx.execute("UPDATE posts SET comments_fetched_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, post_id]).map_err(|e| e.to_string())?;
+    if updated != 1 {
+        return Err("Post no longer exists; comment cache was not saved".into());
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(rows.len())
 }
 
 /// Progress ping for a bulk comment backfill.
@@ -338,7 +373,8 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
     }
     let total = ids.len();
 
-    close_window(&app, "comment-scraper");
+    let _fetch_guard = BULK_COMMENT_FETCH.lock().await;
+    close_window(&app, BULK_COMMENT_WINDOW);
     {
         let state = app.state::<BulkCommentsState>();
         state.queue.lock().map_err(|e| e.to_string())?.clear();
@@ -346,33 +382,54 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
     }
 
     let ids_js = serde_json::to_string(&ids).map_err(|e| e.to_string())?;
+    // Read the live concurrency setting each run (clamped the same 1..=10 the
+    // settings UI enforces), so a change applies to the next backfill without a
+    // restart — same pattern as read_download_settings in download_manager.
+    let concurrency: usize = {
+        let state = app.state::<super::settings::AppSettingsState>();
+        let s = state.0.read().unwrap_or_else(|e| e.into_inner());
+        s.comment_fetch_concurrency.clamp(1, 10) as usize
+    };
     // Paced to stay under Patreon's rate limiting; a backfill is a background
     // chore, so it's better to be slow than to get throttled into failures.
+    // `concurrency` posts are in flight at once (1 = the original strictly
+    // sequential walk); each worker keeps the 350ms pause between the posts it
+    // picks up, so raising the count raises the request rate accordingly.
     let init_script = format!(
         r#"
         window.addEventListener('DOMContentLoaded', async () => {{
             const IDS = {ids_js};
+            const WORKERS = {concurrency};
             const FIELDS = 'include=commenter,parent,first_reply.commenter,first_reply.parent'
                 + '&fields[comment]=body,created,reply_count,parent&fields[user]=full_name,image_url,url'
                 + '&page[count]=50&sort=-created&json-api-version=1.0';
-            for (const id of IDS) {{
-                const pages = [];
-                try {{
-                    let url = 'https://www.patreon.com/api/posts/' + id + '/comments2?' + FIELDS;
-                    for (let i = 0; i < 20 && url; i++) {{
-                        const resp = await fetch(url, {{ credentials: 'include', headers: {{ 'Accept': 'application/json' }} }});
-                        if (!resp.ok) break;
-                        const json = await resp.json();
-                        pages.push(json);
-                        url = json && json.links && json.links.next;
-                    }}
-                }} catch (e) {{ /* skip this post, keep going */ }}
-                try {{
-                    await window.__TAURI_INTERNALS__.invoke('report_bulk_comments',
-                        {{ postId: id, pages: pages, done: false }});
-                }} catch (e) {{}}
-                await new Promise(r => setTimeout(r, 350));
-            }}
+            let next = 0;
+            const worker = async () => {{
+                for (;;) {{
+                    const i = next++;
+                    if (i >= IDS.length) return;
+                    const id = IDS[i];
+                    const pages = [];
+                    try {{
+                        let url = 'https://www.patreon.com/api/posts/' + id + '/comments2?' + FIELDS;
+                        for (let p = 0; p < 20 && url; p++) {{
+                            const resp = await fetch(url, {{ credentials: 'include', headers: {{ 'Accept': 'application/json' }} }});
+                            if (!resp.ok) break;
+                            const json = await resp.json();
+                            pages.push(json);
+                            url = json && json.links && json.links.next;
+                        }}
+                    }} catch (e) {{ /* skip this post, keep going */ }}
+                    try {{
+                        await window.__TAURI_INTERNALS__.invoke('report_bulk_comments',
+                            {{ postId: id, pages: pages, done: false }});
+                    }} catch (e) {{}}
+                    // Anti-throttle pacing, per worker: pause between the posts
+                    // this worker picks up (unchanged from the sequential walk).
+                    await new Promise(r => setTimeout(r, 350));
+                }}
+            }};
+            await Promise.all(Array.from({{ length: WORKERS }}, worker));
             try {{
                 await window.__TAURI_INTERNALS__.invoke('report_bulk_comments',
                     {{ postId: '', pages: [], done: true }});
@@ -385,7 +442,7 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
     // so the document itself only has to establish the origin + session.
     let _window = WebviewWindowBuilder::new(
         &app,
-        "comment-scraper",
+        BULK_COMMENT_WINDOW,
         WebviewUrl::External(
             "https://www.patreon.com/favicon.ico"
                 .parse()
@@ -404,6 +461,7 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
     // total one — a few hundred posts at ~0.5s each legitimately takes minutes.
     const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
     let mut saved = 0usize;
+    let mut failed = 0usize;
     let mut done_count = 0usize;
     let mut last_progress = std::time::Instant::now();
 
@@ -417,9 +475,18 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
         };
 
         if !batch.is_empty() {
-            let conn = open_db(&app)?;
+            let conn = match open_db(&app) {
+                Ok(conn) => conn,
+                Err(error) => {
+                    close_window(&app, BULK_COMMENT_WINDOW);
+                    return Err(error);
+                }
+            };
             for (post_id, pages) in &batch {
-                saved += save_comment_pages(&conn, post_id, pages);
+                match save_comment_pages(&conn, post_id, pages) {
+                    Ok(count) => saved += count,
+                    Err(_) => failed += 1,
+                }
                 done_count += 1;
             }
             last_progress = std::time::Instant::now();
@@ -437,7 +504,7 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
         if finished && batch.is_empty() {
             break;
         }
-        if app.get_webview_window("comment-scraper").is_none() {
+        if app.get_webview_window(BULK_COMMENT_WINDOW).is_none() {
             break; // user closed it — keep whatever landed
         }
         if last_progress.elapsed() >= STALL_TIMEOUT {
@@ -445,14 +512,120 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
         }
     }
 
-    close_window(&app, "comment-scraper");
+    close_window(&app, BULK_COMMENT_WINDOW);
+    if failed > 0 || done_count < total {
+        return Err(format!("Comment fetch incomplete: {} of {} posts failed or were not reached",
+            failed + total.saturating_sub(done_count), total));
+    }
     Ok(saved)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::creator_user_id;
+    use super::{creator_user_id, save_comment_pages};
     use serde_json::json;
+
+    fn cache_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../migrations/00001_init.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/00016_comment_fetch_state.sql")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE comments (
+                id TEXT PRIMARY KEY, post_id TEXT NOT NULL, parent_id TEXT,
+                author_name TEXT, author_id TEXT, body TEXT, published_at TEXT,
+                reply_count INTEGER NOT NULL DEFAULT 0, fetched_at TEXT,
+                is_author INTEGER NOT NULL DEFAULT 0, author_url TEXT
+            );
+            INSERT INTO creators (id, source_key, external_id, name, created_at, updated_at)
+                VALUES ('c1', 'patreon', '1', 'Example Creator', 'test', 'test');
+            INSERT INTO posts (id, creator_id, source_key, title, created_at, updated_at)
+                VALUES ('101', 'c1', 'patreon', 'Example post', 'test', 'test');"
+        ).unwrap();
+        conn
+    }
+
+    fn fetched_at(conn: &rusqlite::Connection) -> Option<String> {
+        conn.query_row("SELECT comments_fetched_at FROM posts WHERE id='101'", [], |row| row.get(0)).unwrap()
+    }
+
+    fn comment_page(id: &str) -> serde_json::Value {
+        json!({ "data": [{ "type": "comment", "id": id, "attributes": { "body": "Example comment" } }],
+            "links": { "next": null } })
+    }
+
+    #[test]
+    fn successful_empty_comments_are_persisted_and_survive_post_updates() {
+        let conn = cache_db();
+        assert_eq!(fetched_at(&conn), None);
+        assert_eq!(save_comment_pages(&conn, "101", &[json!({"data": [], "links": {"next": null}})]).unwrap(), 0);
+        let fetched = fetched_at(&conn);
+        assert!(fetched.is_some());
+        conn.execute("UPDATE posts SET title='Updated example' WHERE id='101'", []).unwrap();
+        assert_eq!(fetched_at(&conn), fetched);
+        let count: i64 = conn.query_row("SELECT count(*) FROM comments", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn failed_and_incomplete_responses_remain_retryable() {
+        let conn = cache_db();
+        let mut unfinished = comment_page("1");
+        unfinished["links"]["next"] = json!("https://example.invalid/comments?page=2");
+        for pages in [
+            vec![], vec![json!({"errors": [{"status": "429"}]})],
+            vec![json!({"data": null})], vec![json!({"data": [{"type": "comment"}]})],
+            vec![unfinished], vec![comment_page("1"), json!({"errors": []})],
+        ] {
+            assert!(save_comment_pages(&conn, "101", &pages).is_err());
+            assert_eq!(fetched_at(&conn), None);
+            let count: i64 = conn.query_row("SELECT count(*) FROM comments", [], |r| r.get(0)).unwrap();
+            assert_eq!(count, 0);
+        }
+    }
+
+    #[test]
+    fn failed_refresh_preserves_cache_but_valid_empty_refresh_clears_it() {
+        let conn = cache_db();
+        assert_eq!(save_comment_pages(&conn, "101", &[comment_page("1")]).unwrap(), 1);
+        let fetched = fetched_at(&conn);
+        assert!(save_comment_pages(&conn, "101", &[]).is_err());
+        assert_eq!(fetched_at(&conn), fetched);
+        let count: i64 = conn.query_row("SELECT count(*) FROM comments", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(save_comment_pages(&conn, "101", &[json!({"data": []})]).unwrap(), 0);
+        assert!(fetched_at(&conn).is_some());
+        let count: i64 = conn.query_row("SELECT count(*) FROM comments", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn failed_cache_or_marker_write_rolls_back_the_whole_refresh() {
+        for trigger in [
+            "CREATE TRIGGER fail_write BEFORE INSERT ON comments BEGIN SELECT RAISE(ABORT, 'test failure'); END;",
+            "CREATE TRIGGER fail_write BEFORE UPDATE OF comments_fetched_at ON posts BEGIN SELECT RAISE(ABORT, 'test failure'); END;",
+        ] {
+            let conn = cache_db();
+            save_comment_pages(&conn, "101", &[comment_page("1")]).unwrap();
+            let fetched = fetched_at(&conn);
+            conn.execute_batch(trigger).unwrap();
+            assert!(save_comment_pages(&conn, "101", &[comment_page("2")]).is_err());
+            assert_eq!(fetched_at(&conn), fetched);
+            let id: String = conn.query_row("SELECT id FROM comments", [], |r| r.get(0)).unwrap();
+            assert_eq!(id, "1");
+        }
+    }
+
+    #[test]
+    fn multi_page_fetch_marks_success_only_after_the_last_page() {
+        let conn = cache_db();
+        let mut first = comment_page("1");
+        first["links"]["next"] = json!("https://example.invalid/comments?page=2");
+        assert_eq!(save_comment_pages(&conn, "101", &[first, comment_page("2")]).unwrap(), 2);
+        assert!(fetched_at(&conn).is_some());
+        assert!(save_comment_pages(&conn, "missing", &[comment_page("3")]).is_err());
+        let count: i64 = conn.query_row("SELECT count(*) FROM comments", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2);
+    }
 
     /// Two campaigns in `included` — the post's own, plus one belonging to
     /// another creator who left a comment. Picking the first would badge the

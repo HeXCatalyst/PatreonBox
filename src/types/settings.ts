@@ -25,6 +25,7 @@ export interface AppSettings {
   demo_mode: boolean;
   download_concurrency: number;
   download_retries: number;
+  comment_fetch_concurrency: number;
   delete_mode: 'trash' | 'direct';
   layout_mode: 'classic' | 'workbench';
   color_theme: 'default' | 'reading-room' | 'dhole' | 'nightwolf' | 'azure-fox';
@@ -57,6 +58,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   demo_mode: false,
   download_concurrency: 3,
   download_retries: 2,
+  comment_fetch_concurrency: 1,
   delete_mode: 'trash',
   layout_mode: 'workbench',
   color_theme: 'nightwolf',

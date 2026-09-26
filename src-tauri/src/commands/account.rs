@@ -21,7 +21,10 @@ fn account_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .join("account.json"))
 }
 
-#[tauri::command]
+// Both are pure file / managed-state work (no UI or window API), so they run on
+// the blocking threadpool instead of inline on the main thread (`async` on a
+// non-async fn = "sync_threadpool" in Tauri v2, no signature change).
+#[tauri::command(async)]
 pub fn report_account_info(app: AppHandle, user: PatreonUser) -> Result<(), String> {
     // Write to disk first — if this fails, state is unchanged and an error is returned
     let json = serde_json::to_string_pretty(&user).map_err(|e| e.to_string())?;
@@ -32,7 +35,7 @@ pub fn report_account_info(app: AppHandle, user: PatreonUser) -> Result<(), Stri
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_account_info(app: AppHandle) -> Result<Option<PatreonUser>, String> {
     let state = app.state::<AccountInfoState>();
     let user = state.0.read().map_err(|e| e.to_string())?.clone();

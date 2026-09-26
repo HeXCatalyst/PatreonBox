@@ -28,6 +28,24 @@ pub struct DownloadState {
     pub paused: bool,
 }
 
+/// The slice of a job the always-mounted app shell needs (P1-6): identity and
+/// status, nothing else. `get_download_state` ships whole rows — file names, byte
+/// counters, error strings — and the root pulled that entire list on every launch
+/// only to count the outstanding jobs for the sidebar badge.
+#[derive(Clone, serde::Serialize)]
+pub struct DownloadJobLite {
+    pub asset_id: String,
+    pub status: String,
+}
+
+/// Summary-only queue state: the outstanding jobs plus the queue-wide pause flag
+/// (a paused queue still has "queued" rows, so the rows alone can't convey it).
+#[derive(Clone, serde::Serialize)]
+pub struct DownloadSummaryState {
+    pub active: Vec<DownloadJobLite>,
+    pub paused: bool,
+}
+
 struct JobEntry {
     job: DownloadJob,
     source_url: String,
@@ -44,17 +62,42 @@ struct JobEntry {
     resume_from: u64,
 }
 
+/// Cached HTTP client + the proxy settings it was built for, so we only rebuild
+/// the expensive Client (native-tls stack init + `scutil` proxy resolution) when
+/// the proxy mode/url or timeout actually changes — not once per download.
+/// reqwest::Client is internally an Arc, so clone is cheap.
+struct CachedClient {
+    client: reqwest::Client,
+    proxy_mode: String,
+    proxy_url: Option<String>,
+    timeout_secs: u32,
+}
+
 pub struct DownloadManager {
     order: Vec<String>,                  // asset_ids, insertion order
     entries: HashMap<String, JobEntry>,
     paused: bool,
     active: usize,
     supervisor_running: bool,
+    cached_client: Option<CachedClient>,
+    /// Patreon session-cookie header plus when it was read (P2-2). `patreon_cookie_header`
+    /// hops to the webview thread for a full cookie-store read; a 500-file queue
+    /// used to pay that round trip once per file. The `None` case is cached too —
+    /// a signed-out webview shouldn't be re-interrogated per download either.
+    cached_cookie: Option<(Option<String>, Instant)>,
 }
 
 impl DownloadManager {
     fn new() -> Self {
-        DownloadManager { order: Vec::new(), entries: HashMap::new(), paused: false, active: 0, supervisor_running: false }
+        DownloadManager {
+            order: Vec::new(),
+            entries: HashMap::new(),
+            paused: false,
+            active: 0,
+            supervisor_running: false,
+            cached_client: None,
+            cached_cookie: None,
+        }
     }
     fn snapshot(&self) -> Vec<DownloadJob> {
         self.order.iter().filter_map(|id| self.entries.get(id)).map(|e| e.job.clone()).collect()
@@ -114,6 +157,31 @@ fn remove_jobs(app: &AppHandle, m: &mut DownloadManager, asset_ids: &[String]) {
         m.entries.remove(id);
         let _ = app.emit("download-job-removed", id);
     }
+}
+
+/// How many finished jobs the in-memory queue keeps (P2-10).
+///
+/// Completed rows are history for the Downloads page, and nothing pruned them:
+/// a 10k-file batch left 10k jobs resident for the rest of the session, so every
+/// snapshot — including the launch seed — paid for all of them. The newest 200
+/// are more than anyone scrolls back through, and `clear_completed_downloads`
+/// still clears them on demand.
+const MAX_DONE_JOBS: usize = 200;
+
+/// Ids of the done jobs to drop so at most `max` remain, oldest first. Pure, so
+/// the eviction order is unit-testable without a manager or an app handle.
+/// Only `done` rows are candidates: a failed job is still actionable, and a
+/// cancelled one is removed by its own worker.
+fn excess_done_jobs(
+    order: &[String],
+    entries: &HashMap<String, JobEntry>,
+    max: usize,
+) -> Vec<String> {
+    let done: Vec<&String> = order.iter()
+        .filter(|id| entries.get(*id).map(|e| e.job.status == "done").unwrap_or(false))
+        .collect();
+    if done.len() <= max { return Vec::new(); }
+    done[..done.len() - max].iter().map(|id| (*id).clone()).collect()
 }
 
 /// Read the live concurrency / retry / delay settings each time (so changes apply mid-run).
@@ -276,6 +344,22 @@ pub async fn get_download_state(app: AppHandle) -> DownloadState {
     DownloadState { jobs: m.snapshot(), paused: m.paused }
 }
 
+/// The app shell's seed: only the jobs that can affect the badge or the animated
+/// icon (P1-6). Done/failed/cancelled rows are excluded by construction, so this
+/// stays small no matter how long the session has been running — unlike the full
+/// state, whose size is bounded only by `MAX_DONE_JOBS`.
+#[tauri::command]
+pub async fn get_download_summary(app: AppHandle) -> DownloadSummaryState {
+    let mgr_arc = app.state::<DownloadManagerState>().0.clone();
+    let m = mgr_arc.lock().await;
+    let active = m.order.iter()
+        .filter_map(|id| m.entries.get(id))
+        .filter(|e| matches!(e.job.status.as_str(), "downloading" | "queued" | "paused"))
+        .map(|e| DownloadJobLite { asset_id: e.job.asset_id.clone(), status: e.job.status.clone() })
+        .collect();
+    DownloadSummaryState { active, paused: m.paused }
+}
+
 #[tauri::command]
 pub async fn pause_downloads(app: AppHandle) {
     let mgr_arc = app.state::<DownloadManagerState>().0.clone();
@@ -364,11 +448,26 @@ pub async fn retry_all_failed(app: AppHandle, creator_id: Option<String>) -> Res
     };
     if ids.is_empty() { return Ok(0); }
     if let Ok(conn) = open_db(&app) {
-        for id in &ids {
-            let _ = conn.execute(
-                "UPDATE assets SET download_error = NULL, download_error_kind = NULL WHERE id = ?1",
-                rusqlite::params![id],
-            );
+        // Batch the error-clear into chunked UPDATE ... WHERE id IN (...) (one
+        // statement per 500 ids, safe under SQLite's 999-variable cap) wrapped in
+        // a single transaction. The old per-id loop did N implicit transactions
+        // (N WAL fsyncs); a 200-failure retry was 200 fsyncs. Now it's ≤1.
+        if let Ok(tx) = conn.unchecked_transaction() {
+            for chunk in ids.chunks(500) {
+                let placeholders: String = chunk.iter().enumerate()
+                    .map(|(i, _)| format!("?{}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let _ = tx.execute(
+                    &format!(
+                        "UPDATE assets SET download_error = NULL, download_error_kind = NULL \
+                         WHERE id IN ({})",
+                        placeholders,
+                    ),
+                    rusqlite::params_from_iter(chunk.iter()),
+                );
+            }
+            let _ = tx.commit();
         }
     }
     start_downloads(app, None, Some(ids), None, None).await
@@ -511,6 +610,38 @@ pub(crate) fn patreon_cookie_header(app: &AppHandle) -> Option<String> {
     (!header.is_empty()).then_some(header)
 }
 
+/// How long a cookie-store read is trusted (P2-2).
+const COOKIE_TTL: Duration = Duration::from_secs(60);
+
+/// `patreon_cookie_header` memoised on the manager, so one queue run costs one
+/// webview round trip instead of one per file.
+///
+/// Staleness: a re-login inside the TTL can serve the previous session's cookies.
+/// The affected request 403s, which the downloader already treats as Transient
+/// and retries — by then the entry has usually expired, so the failure is a short
+/// delay rather than a wrong result.
+///
+/// The read happens *outside* the lock: `patreon_cookie_header` blocks on the
+/// webview thread, and holding the manager mutex across it would stall the
+/// supervisor and every worker. Two concurrent misses may both read and the
+/// second write wins — same harmless race as `get_or_build_client`.
+async fn cached_patreon_cookie(app: &AppHandle, mgr_arc: &Arc<Mutex<DownloadManager>>) -> Option<String> {
+    {
+        let m = mgr_arc.lock().await;
+        if let Some((ref cached, at)) = m.cached_cookie {
+            if at.elapsed() < COOKIE_TTL {
+                return cached.clone();
+            }
+        }
+    }
+    let fresh = patreon_cookie_header(app);
+    {
+        let mut m = mgr_arc.lock().await;
+        m.cached_cookie = Some((fresh.clone(), Instant::now()));
+    }
+    fresh
+}
+
 fn is_patreon_url(u: &str) -> bool {
     tauri::Url::parse(u).ok()
         .and_then(|p| p.host_str().map(|h| {
@@ -518,6 +649,41 @@ fn is_patreon_url(u: &str) -> bool {
                 || h == "patreonusercontent.com" || h.ends_with(".patreonusercontent.com")
         }))
         .unwrap_or(false)
+}
+
+/// Get a cached reqwest::Client, rebuilding only when proxy settings or
+/// timeout change. Avoids the per-download cost of native-tls stack
+/// initialization + `scutil` system-proxy resolution (a forked subprocess on
+/// macOS). Two concurrent cache misses can both build — harmless, the second
+/// just overwrites the cache.
+async fn get_or_build_client(app: &AppHandle, mgr_arc: &Arc<Mutex<DownloadManager>>) -> reqwest::Client {
+    // Read current proxy + timeout settings (cheap: just a RwLock read, no IO).
+    let (proxy_mode, proxy_url, timeout_secs) = {
+        let state = app.state::<super::settings::AppSettingsState>();
+        let s = state.0.read().unwrap_or_else(|e| e.into_inner());
+        (s.proxy_mode.clone(), s.proxy_url.clone(), s.download_timeout_secs)
+    };
+    // Fast path: cache hit.
+    {
+        let m = mgr_arc.lock().await;
+        if let Some(ref c) = m.cached_client {
+            if c.proxy_mode == proxy_mode && c.proxy_url == proxy_url && c.timeout_secs == timeout_secs {
+                return c.client.clone();
+            }
+        }
+    }
+    // Cache miss: build (expensive — scutil + TLS init), then cache.
+    let new_client = build_http_client(app);
+    {
+        let mut m = mgr_arc.lock().await;
+        m.cached_client = Some(CachedClient {
+            client: new_client.clone(),
+            proxy_mode,
+            proxy_url,
+            timeout_secs,
+        });
+    }
+    new_client
 }
 
 async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asset_id: String) {
@@ -529,10 +695,10 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
         }
     };
 
-    let client = build_http_client(&app);
+    let client = get_or_build_client(&app, &mgr_arc).await;
     // Attach the session cookie only for patreon.com hosts (auth-gated attachments
     // /videos). reqwest drops it on the cross-host redirect to the signed CDN.
-    let cookie = if is_patreon_url(&source_url) { patreon_cookie_header(&app) } else { None };
+    let cookie = if is_patreon_url(&source_url) { cached_patreon_cookie(&app, &mgr_arc).await } else { None };
     let outcome = download_streaming(&app, &mgr_arc, &asset_id, &client, &source_url, &dest, cookie.as_deref(), resume_from).await;
 
     // Per-request pacing to avoid CDN rate-limiting (kept per worker).
@@ -608,6 +774,13 @@ async fn run_download(app: AppHandle, mgr_arc: Arc<Mutex<DownloadManager>>, asse
                 e.job.error = None;
                 emit_job(&app, &e.job);
             }
+            // Bound the resident history. The frontend's Completed list only ever
+            // shows this window, and an unbounded done set grew every snapshot
+            // (and every launch seed) with the size of the session's batches.
+            // Evicted ids go out as `download-job-removed`, so an open Downloads
+            // page drops the rows instead of keeping ghosts.
+            let excess = excess_done_jobs(&m.order, &m.entries, MAX_DONE_JOBS);
+            remove_jobs(&app, &mut m, &excess);
         }
         // Paused mid-stream. Hold the job and the bytes it already has so
         // resuming picks up where it stopped.
@@ -809,4 +982,69 @@ async fn download_streaming(
         return DlOutcome::LocalError(format!("rename: {}", e));
     }
     DlOutcome::Ok(downloaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(status: &str) -> JobEntry {
+        JobEntry {
+            job: DownloadJob {
+                asset_id: String::new(),
+                creator_id: String::new(),
+                file_name: String::new(),
+                status: status.into(),
+                bytes_done: 0,
+                bytes_total: None,
+                error: None,
+            },
+            source_url: String::new(),
+            dest: std::path::PathBuf::new(),
+            attempts: 0,
+            resume_from: 0,
+        }
+    }
+
+    /// Builds an interleaved queue: only the `done` rows are eviction candidates,
+    /// and they must be dropped oldest-first.
+    fn mixed_queue() -> (Vec<String>, HashMap<String, JobEntry>) {
+        let mut order = Vec::new();
+        let mut entries = HashMap::new();
+        for (i, status) in ["done", "failed", "done", "queued", "done", "cancelled", "done", "done"]
+            .iter()
+            .enumerate()
+        {
+            let id = format!("asset-{}", i);
+            entries.insert(id.clone(), entry(status));
+            order.push(id);
+        }
+        (order, entries)
+    }
+
+    #[test]
+    fn excess_done_jobs_evicts_oldest_past_the_cap_only() {
+        let (order, entries) = mixed_queue();
+        // Five done rows; keeping two means the three oldest go.
+        assert_eq!(
+            excess_done_jobs(&order, &entries, 2),
+            vec!["asset-0".to_string(), "asset-2".to_string(), "asset-4".to_string()],
+        );
+        // Non-done rows are never evicted, even when they sit before a done row
+        // in `order` (a failed job is still actionable).
+        let evicted = excess_done_jobs(&order, &entries, 2);
+        assert!(!evicted.contains(&"asset-1".to_string()), "failed 作业不可淘汰");
+        assert!(!evicted.contains(&"asset-3".to_string()), "queued 作业不可淘汰");
+        assert!(!evicted.contains(&"asset-5".to_string()), "cancelled 作业由 worker 自行清掉");
+    }
+
+    #[test]
+    fn excess_done_jobs_is_empty_under_the_cap() {
+        let (order, entries) = mixed_queue();
+        assert!(excess_done_jobs(&order, &entries, 5).is_empty(), "恰好等于上限时不淘汰");
+        assert!(excess_done_jobs(&order, &entries, MAX_DONE_JOBS).is_empty());
+        // A queue with no done rows at all: nothing to do.
+        let (order, entries) = (vec!["a".to_string()], HashMap::from([("a".to_string(), entry("downloading"))]));
+        assert!(excess_done_jobs(&order, &entries, 0).is_empty());
+    }
 }

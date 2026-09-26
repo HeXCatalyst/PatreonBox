@@ -383,6 +383,13 @@ pub async fn save_scraped_to_db(app: AppHandle) -> Result<usize, String> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut synced_ids: Vec<String> = Vec::new();
 
+    // One transaction for all per-creator upserts + the unsubscribe pass. Without
+    // this, N scraped creators = N independent transactions (each a WAL fsync),
+    // and a crash mid-sync left a partially-applied subscription set. A single
+    // transaction makes the whole sync atomic: either every scraped creator is
+    // saved and every absent creator is marked unsubscribed, or nothing changed.
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
     for creator in &unique_creators {
         // Reuse the existing row's id when this creator is already known (matched
         // by canonical slug), else derive a stable id from the canonical URL.
@@ -391,7 +398,7 @@ pub async fn save_scraped_to_db(app: AppHandle) -> Result<usize, String> {
             .unwrap_or_else(|| format!("{:x}", stable_hash(&canon)));
         synced_ids.push(id.clone());
 
-        let result = conn.execute(
+        let result = tx.execute(
             "INSERT INTO creators (id, source_key, external_id, name, profile_url, avatar_path,
                                    description, last_synced_at, created_at, updated_at,
                                    is_subscribed, subscription_type)
@@ -439,7 +446,7 @@ pub async fn save_scraped_to_db(app: AppHandle) -> Result<usize, String> {
     // up as "scraped >= existing" (we saw everyone who's still subscribed), so
     // the guard never blocks a legitimate unsubscribe — it only blocks broken
     // scrapes.
-    let existing_subscribed: i64 = conn
+    let existing_subscribed: i64 = tx
         .query_row(
             "SELECT COUNT(*) FROM creators WHERE source_key = 'patreon' AND is_subscribed = 1",
             [],
@@ -467,16 +474,21 @@ pub async fn save_scraped_to_db(app: AppHandle) -> Result<usize, String> {
             "UPDATE creators SET is_subscribed = 0 WHERE source_key = 'patreon' AND id NOT IN ({})",
             placeholders
         );
-        if let Err(e) = conn.execute(&query, rusqlite::params_from_iter(synced_ids.iter())) {
+        if let Err(e) = tx.execute(&query, rusqlite::params_from_iter(synced_ids.iter())) {
             eprintln!("DEBUG: Failed to mark unsubscribed: {}", e);
         }
     }
+
+    tx.commit().map_err(|e| format!("Transaction commit failed: {}", e))?;
 
     eprintln!("DEBUG: Saved {} creators to database", saved_count);
     Ok(saved_count)
 }
 
-#[tauri::command]
+// Pure DB writes (no UI or window API), so these run on the blocking threadpool
+// instead of inline on the main thread (`async` on a non-async fn =
+// "sync_threadpool" in Tauri v2, no signature change).
+#[tauri::command(async)]
 pub fn set_creator_pinned(app: AppHandle, id: String, pinned: bool) -> Result<(), String> {
     let conn = open_db(&app)?;
     if pinned {
@@ -495,7 +507,7 @@ pub fn set_creator_pinned(app: AppHandle, id: String, pinned: bool) -> Result<()
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reorder_pinned_creators(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
     let conn = open_db(&app)?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;

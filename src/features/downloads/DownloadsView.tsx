@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronLeft, ChevronDown, ChevronRight, Pause, Play, RotateCcw, X, XCircle, AlertTriangle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useDownloadJobs, type DownloadJob } from "./useDownloadJobs";
 import { useThroughput, STALL_SAMPLES, type ThroughputSample } from "./useThroughput";
 import { ThroughputChart } from "./ThroughputChart";
-import { useTranslation } from "../../lib/i18n";
+import { useTranslation, type Translations } from "../../lib/i18n";
 import { Button } from "@/components/ui/button";
 
 interface DownloadsViewProps {
@@ -13,6 +13,14 @@ interface DownloadsViewProps {
 }
 
 const MONITOR_KEY = "patreonbox-downloads-monitor-open";
+
+/**
+ * How many rows the Queued section renders. A "download everything" run can
+ * enqueue thousands of jobs at once; rendering one DOM subtree each made the
+ * page crawl exactly when the queue was most interesting. The count in the
+ * section header stays exact, and the remainder is reported in one line.
+ */
+const QUEUED_RENDER_CAP = 100;
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -114,6 +122,84 @@ function ThroughputMonitor({
   );
 }
 
+/**
+ * One queue row. Extracted and memoised because a download's progress events
+ * arrive at up to ~66/sec per active job: the parent re-renders on each one (its
+ * job map changed), and without this every *other* row in a long queue was
+ * re-rendered too. Props are primitives or referentially stable —
+ * `job` identity only changes for the job that actually updated, `speed` is a
+ * number, `creatorName` is memoised by the caller, and `t` is the module-level
+ * translations object.
+ */
+const DownloadsRow = memo(function DownloadsRow({
+  job, speed, creatorName, t, onRetry, onRemove,
+}: {
+  job: DownloadJob;
+  speed: number;
+  creatorName: (id: string) => string;
+  t: Translations["downloads"];
+  onRetry: (assetId: string) => void;
+  onRemove: (assetId: string) => void;
+}) {
+  const pct = job.bytes_total && job.bytes_total > 0 ? Math.min(100, (job.bytes_done / job.bytes_total) * 100) : null;
+  const isPaused = job.status === "paused";
+  const rate = fmtRate(speed);
+  const eta = job.bytes_total ? fmtEta(job.bytes_total - job.bytes_done, speed) : null;
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-background">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-mono truncate">{job.file_name}</div>
+        <div className="text-xs text-muted-foreground truncate">
+          {creatorName(job.creator_id)}
+          {job.status === "failed" && job.error ? <span className="text-destructive"> · {job.error}</span> : null}
+        </div>
+        {/* Paused rows keep the bar: the whole point is that the file is
+            part-downloaded and will continue from where it stopped. */}
+        {(job.status === "downloading" || job.status === "paused") && (
+          <div className="mt-1.5 flex items-center gap-3">
+            <div className="flex-1 min-w-[3rem] h-1.5 rounded-full bg-muted overflow-hidden">
+              {pct !== null
+                ? <div className={`h-full rounded-full ${isPaused ? "bg-muted-foreground/50" : "bg-primary"}`} style={{ width: `${pct}%` }} />
+                : <div className="h-full w-1/3 bg-primary/70 rounded-full animate-pulse" />}
+            </div>
+            {/* Fixed-width tabular slots so digits don't shift the row as they
+                tick, and nowrap so a long "13.1 MB / 26.4 MB" can't fold onto
+                a second line and change the row's height. */}
+            <div className="flex items-baseline gap-3 flex-shrink-0 font-mono text-xs tabular-nums whitespace-nowrap">
+              <span className={`font-semibold text-right w-[5.5rem] ${isPaused ? "text-muted-foreground" : "text-primary"}`}>
+                {isPaused ? t.pausedLabel : `${rate.value} ${rate.unit}`}
+              </span>
+              <span className="text-muted-foreground text-right w-[9.5rem]">
+                {pct !== null
+                  ? `${fmtBytes(job.bytes_done)} / ${fmtBytes(job.bytes_total!)}`
+                  : fmtBytes(job.bytes_done)}
+              </span>
+              <span className="text-muted-foreground/70 text-right w-[6.5rem]">
+                {!isPaused && eta ? t.etaLeft(eta) : ""}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        {job.status === "failed" && (
+          <button className="w-8 h-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center"
+            title={t.retry} onClick={() => onRetry(job.asset_id)}>
+            <RotateCcw className="h-4 w-4" />
+          </button>
+        )}
+        {job.status !== "done" && (
+          <button className="w-8 h-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-muted flex items-center justify-center"
+            title={t.remove} onClick={() => onRemove(job.asset_id)}>
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});
+
 export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
   const t = useTranslation();
   // Owns the full reactive job list. Mounted only while this page is open, so
@@ -126,14 +212,24 @@ export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
     () => localStorage.getItem(MONITOR_KEY) !== "0",
   );
 
+  // One pass instead of five filtered copies (P2-10): this runs per progress
+  // event, and each filter walked the entire queue.
   const { downloading, pausedJobs, queued, failed, completed } = useMemo(() => {
-    return {
-      downloading: jobs.filter(j => j.status === "downloading"),
-      pausedJobs: jobs.filter(j => j.status === "paused"),
-      queued: jobs.filter(j => j.status === "queued"),
-      failed: jobs.filter(j => j.status === "failed"),
-      completed: jobs.filter(j => j.status === "done"),
-    };
+    const downloading: DownloadJob[] = [];
+    const pausedJobs: DownloadJob[] = [];
+    const queued: DownloadJob[] = [];
+    const failed: DownloadJob[] = [];
+    const completed: DownloadJob[] = [];
+    for (const j of jobs) {
+      switch (j.status) {
+        case "downloading": downloading.push(j); break;
+        case "paused": pausedJobs.push(j); break;
+        case "queued": queued.push(j); break;
+        case "failed": failed.push(j); break;
+        case "done": completed.push(j); break;
+      }
+    }
+    return { downloading, pausedJobs, queued, failed, completed };
   }, [jobs]);
 
   // Sampling runs for as long as this page is mounted, so the chart keeps
@@ -148,7 +244,21 @@ export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
     });
   };
 
-  const act = async (p: Promise<unknown>) => { try { await p; } catch (e) { console.error(e); } refresh(); };
+  const act = useCallback(async (p: Promise<unknown>) => {
+    try { await p; } catch (e) { console.error(e); }
+    refresh();
+  }, [refresh]);
+
+  // Stable row callbacks — an inline arrow here would defeat DownloadsRow's memo
+  // on every parent render.
+  const handleRetry = useCallback(
+    (assetId: string) => { void act(invoke("retry_download", { assetId })); },
+    [act],
+  );
+  const handleRemove = useCallback(
+    (assetId: string) => { void act(invoke("cancel_download", { assetId })); },
+    [act],
+  );
 
   // No optimistic local flip: the backend emits download-paused, which
   // useDownloadJobs applies, so the button follows the actual queue state.
@@ -156,76 +266,35 @@ export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
     await act(invoke(paused ? "resume_downloads" : "pause_downloads"));
   };
 
-  const row = (j: DownloadJob) => {
-    const pct = j.bytes_total && j.bytes_total > 0 ? Math.min(100, (j.bytes_done / j.bytes_total) * 100) : null;
-    const isPaused = j.status === "paused";
-    const speed = speeds[j.asset_id] ?? 0;
-    const rate = fmtRate(speed);
-    const eta = j.bytes_total ? fmtEta(j.bytes_total - j.bytes_done, speed) : null;
+  const renderRow = (j: DownloadJob) => (
+    <DownloadsRow
+      key={j.asset_id}
+      job={j}
+      speed={speeds[j.asset_id] ?? 0}
+      creatorName={creatorName}
+      t={t.downloads}
+      onRetry={handleRetry}
+      onRemove={handleRemove}
+    />
+  );
 
+  const section = (title: string, items: DownloadJob[], cap = Infinity) => {
+    if (items.length === 0) return null;
+    const shown = cap === Infinity ? items : items.slice(0, cap);
+    const hidden = items.length - shown.length;
     return (
-      <div key={j.asset_id} className="flex items-center gap-3 px-3 py-2 rounded-lg border bg-background">
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-mono truncate">{j.file_name}</div>
-          <div className="text-xs text-muted-foreground truncate">
-            {creatorName(j.creator_id)}
-            {j.status === "failed" && j.error ? <span className="text-destructive"> · {j.error}</span> : null}
-          </div>
-          {/* Paused rows keep the bar: the whole point is that the file is
-              part-downloaded and will continue from where it stopped. */}
-          {(j.status === "downloading" || j.status === "paused") && (
-            <div className="mt-1.5 flex items-center gap-3">
-              <div className="flex-1 min-w-[3rem] h-1.5 rounded-full bg-muted overflow-hidden">
-                {pct !== null
-                  ? <div className={`h-full rounded-full ${isPaused ? "bg-muted-foreground/50" : "bg-primary"}`} style={{ width: `${pct}%` }} />
-                  : <div className="h-full w-1/3 bg-primary/70 rounded-full animate-pulse" />}
-              </div>
-              {/* Fixed-width tabular slots so digits don't shift the row as they
-                  tick, and nowrap so a long "13.1 MB / 26.4 MB" can't fold onto
-                  a second line and change the row's height. */}
-              <div className="flex items-baseline gap-3 flex-shrink-0 font-mono text-xs tabular-nums whitespace-nowrap">
-                <span className={`font-semibold text-right w-[5.5rem] ${isPaused ? "text-muted-foreground" : "text-primary"}`}>
-                  {isPaused ? t.downloads.pausedLabel : `${rate.value} ${rate.unit}`}
-                </span>
-                <span className="text-muted-foreground text-right w-[9.5rem]">
-                  {pct !== null
-                    ? `${fmtBytes(j.bytes_done)} / ${fmtBytes(j.bytes_total!)}`
-                    : fmtBytes(j.bytes_done)}
-                </span>
-                <span className="text-muted-foreground/70 text-right w-[6.5rem]">
-                  {!isPaused && eta ? t.downloads.etaLeft(eta) : ""}
-                </span>
-              </div>
-            </div>
-          )}
+      <section className="mt-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{title}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{items.length}</span>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {j.status === "failed" && (
-            <button className="w-8 h-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center"
-              title={t.downloads.retry} onClick={() => act(invoke("retry_download", { assetId: j.asset_id }))}>
-              <RotateCcw className="h-4 w-4" />
-            </button>
-          )}
-          {j.status !== "done" && (
-            <button className="w-8 h-8 rounded-md text-muted-foreground hover:text-destructive hover:bg-muted flex items-center justify-center"
-              title={t.downloads.remove} onClick={() => act(invoke("cancel_download", { assetId: j.asset_id }))}>
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      </div>
+        <div className="space-y-1.5">{shown.map(renderRow)}</div>
+        {hidden > 0 && (
+          <div className="mt-1.5 text-xs text-muted-foreground">{t.downloads.moreQueued(hidden)}</div>
+        )}
+      </section>
     );
   };
-
-  const section = (title: string, items: DownloadJob[]) => items.length > 0 && (
-    <section className="mt-5">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{title}</span>
-        <span className="text-xs text-muted-foreground tabular-nums">{items.length}</span>
-      </div>
-      <div className="space-y-1.5">{items.map(row)}</div>
-    </section>
-  );
 
   const nothing = jobs.length === 0;
 
@@ -277,7 +346,7 @@ export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
           <>
             {section(t.downloads.sectionDownloading, downloading)}
             {section(t.downloads.sectionPaused, pausedJobs)}
-            {section(t.downloads.sectionQueued, queued)}
+            {section(t.downloads.sectionQueued, queued, QUEUED_RENDER_CAP)}
             {section(t.downloads.sectionFailed, failed)}
 
             {completed.length > 0 && (
@@ -294,7 +363,7 @@ export function DownloadsView({ onClose, creatorName }: DownloadsViewProps) {
                     {t.downloads.clearCompleted}
                   </button>
                 </div>
-                {showCompleted && <div className="space-y-1.5">{completed.map(row)}</div>}
+                {showCompleted && <div className="space-y-1.5">{completed.map(renderRow)}</div>}
               </section>
             )}
           </>

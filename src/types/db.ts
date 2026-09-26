@@ -5,7 +5,9 @@ export interface Creator {
   name: string;
   profile_url: string | null;
   avatar_path: string | null;
-  description: string | null;
+  /** Not selected by list queries (no readers in the UI) — present only on rows
+   * that carry the full creator record. */
+  description?: string | null;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
@@ -42,13 +44,16 @@ export interface Post {
 export interface Asset {
   id: string;
   post_id: string;
-  source_url: string | null;
+  /** Not selected by list queries — the UI renders from `local_path`. Present
+   * only on rows fetched whole. */
+  source_url?: string | null;
   local_path: string;
   file_name: string;
   mime_type: string | null;
   media_type: string | null;
   byte_size: number | null;
-  checksum_sha256: string | null;
+  /** Not selected by list queries (nothing verifies checksums in the UI). */
+  checksum_sha256?: string | null;
   created_at: string;
   updated_at: string;
   downloaded_at: string | null;

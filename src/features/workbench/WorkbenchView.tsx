@@ -1,26 +1,32 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Maximize2, RefreshCw, ImageDown, FileText, Image as ImageIcon } from "lucide-react";
 import { Creator, Post, Asset } from "../../types/db";
-import { assetUrl, useImagesDir } from "../../lib/assetUrl";
-import { isImageFile } from "../../lib/media";
-import { getCreatorMedia } from "../../lib/db";
+import { useImagesDir } from "../../lib/assetUrl";
+import { getFirstImagePerPost, getPostIndex, type PostIndexRow, type PostsFilterOptions } from "../../lib/db";
+import { getDemoPosts } from "../../lib/demoData";
 import { ReadingView } from "../library/ReadingView";
 import { MediaView } from "../library/MediaView";
 import { Button } from "@/components/ui/button";
 import { IconRail } from "./IconRail";
-import { FilmstripDock } from "./FilmstripDock";
+import { FilmstripDock, type FilmstripPost } from "./FilmstripDock";
 import { TimelineView } from "./TimelineView";
 import type { DownloadStatus } from "../downloads/useDownloadJobs";
 import { useTranslation } from "../../lib/i18n";
+import { useSyncProgress } from "../library/progress";
 
 interface WorkbenchViewProps {
   creators: (Creator & { post_count: number })[];
   selectedCreatorId: string | null;
   onSelectCreator: (id: string) => void;
-  posts: Post[];
+  /** The list query, shared with the classic layout so both show the same set. */
+  postsFilter: PostsFilterOptions;
+  /** Bumped when the posts change underneath (sync finished, demo flip). */
+  reloadToken: number;
   selectedPost: Post | null;
   selectedPostAssets: Asset[];
-  onSelectPost: (post: Post) => void;
+  /** Open a post by id: the filmstrip only carries ids (P1-5), and the canvas
+   * fetches that one post instead of the whole list. */
+  onSelectPostById: (postId: string) => void;
   onOpenPost: (creatorId: string, postId: string) => void;
   onToggleStar?: (post: Post, newStarred: boolean) => void;
   onOpenSearch: () => void;
@@ -39,8 +45,6 @@ interface WorkbenchViewProps {
   onSyncImages: () => Promise<void>;
   isSyncingPosts: boolean;
   isSyncingImages: boolean;
-  syncProgress: number;
-  syncTotal: number;
   imageProgress: number;
   imageTotal: number;
   /* Sync options, mirroring the classic toolbar: how many posts to fetch,
@@ -66,19 +70,27 @@ interface WorkbenchViewProps {
  */
 export function WorkbenchView({
   creators, selectedCreatorId, onSelectCreator,
-  posts, selectedPost, selectedPostAssets, onSelectPost, onOpenPost, onToggleStar,
+  postsFilter, reloadToken,
+  selectedPost, selectedPostAssets, onSelectPostById, onOpenPost, onToggleStar,
   onOpenSearch, onOpenFavorites, onOpenDownloads, onOpenSettings, onOpenNotifications,
   onSyncSubscriptions, syncingSubscriptions,
   downloadStatus, downloadActiveCount, settingsErrorCount,
   onSyncPosts, onSyncImages, isSyncingPosts, isSyncingImages,
-  syncProgress, syncTotal, imageProgress, imageTotal,
+  imageProgress, imageTotal,
   maxPosts, onMaxPostsChange, incrementalSync, onIncrementalSyncChange,
   syncMode, onSyncModeChange,
   mediaOrder, onMediaOrderChange, demoMode,
 }: WorkbenchViewProps) {
   const t = useTranslation();
   const imagesDir = useImagesDir();
+  // The sync counter comes straight from the progress store rather than through
+  // the library root's state — see PostList for the reasoning.
+  const { current: syncProgress, total: syncTotal } = useSyncProgress();
   const [media, setMedia] = useState<Asset[]>([]);
+  // The filmstrip's model: one row per post, id/title/creator_id only (P1-5).
+  // The root used to hand the workbench the full post array — every column of
+  // every post the creator has — for a strip that renders a title and a thumb.
+  const [postIndex, setPostIndex] = useState<PostIndexRow[]>([]);
   const [home, setHome] = useState<'workbench' | 'timeline'>('workbench');
   const [mode, setMode] = useState<'posts' | 'media'>('posts');
   const [zen, setZen] = useState(false);
@@ -96,14 +108,47 @@ export function WorkbenchView({
   };
 
   // Selecting a creator (from the rail) always returns to the Workbench home,
-  // on the Posts view.
-  const selectCreator = (id: string) => { setHome('workbench'); setMode('posts'); onSelectCreator(id); };
+  // on the Posts view. Stable identity so a re-render of the workbench doesn't
+  // invalidate the memoized rail.
+  const selectCreator = useCallback((id: string) => {
+    setHome('workbench');
+    setMode('posts');
+    onSelectCreator(id);
+  }, [onSelectCreator]);
 
-  // Downloaded images for the current creator → first image per post = its thumb.
+  const openTimeline = useCallback(() => setHome('timeline'), []);
+
+  // The filmstrip index for the current query. Demo mode builds it from the demo
+  // dataset (no DB behind it); otherwise it is one lightweight query — the same
+  // filter the classic list uses, so both layouts agree on the set.
+  useEffect(() => {
+    if (!selectedCreatorId) { setPostIndex([]); return; }
+    if (demoMode) {
+      setPostIndex(getDemoPosts(
+        postsFilter.starred ? undefined : selectedCreatorId,
+        !!postsFilter.starred,
+      ).map(p => ({ id: p.id, title: p.title, creator_id: p.creator_id })));
+      return;
+    }
+    let cancelled = false;
+    getPostIndex(postsFilter)
+      .then(index => { if (!cancelled) setPostIndex(index); })
+      .catch(console.error);
+    return () => { cancelled = true; };
+    // The filter is a stable identity per query, so this refetches exactly when
+    // the query changes — plus the reload token for changes that leave the query
+    // alone (a sync bringing in new posts).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCreatorId, postsFilter, reloadToken, demoMode]);
+
+  // First image per post = the filmstrip thumbnail. P1-2: previously fetched
+  // every media row for the creator (thousands) into JS just to keep one per
+  // post; now the SQL ROW_NUMBER() partition does the filtering, returning one
+  // row per post.
   useEffect(() => {
     if (!selectedCreatorId) { setMedia([]); return; }
     let cancelled = false;
-    getCreatorMedia(selectedCreatorId, "desc")
+    getFirstImagePerPost(selectedCreatorId)
       .then(m => { if (!cancelled) setMedia(m); })
       .catch(console.error);
     return () => { cancelled = true; };
@@ -113,28 +158,37 @@ export function WorkbenchView({
     const map = new Map<string, Asset>();
     for (const a of media) {
       if (!a.post_id || map.has(a.post_id)) continue;
-      if (a.local_path && isImageFile(a.local_path)) map.set(a.post_id, a);
+      map.set(a.post_id, a);
     }
     return map;
   }, [media]);
 
-  const thumbFor = (post: Post): string | null => {
-    const a = thumbByPost.get(post.id);
-    if (!a) return null;
-    return assetUrl(imagesDir, a);
-  };
+  // Stable identity is what lets a memoized filmstrip cell skip: the map only
+  // changes when the creator's media does, so a selection change re-renders the
+  // two cells whose highlight moved instead of every cell in the strip.
+  const thumbFor = useCallback(
+    (post: { id: string }): Asset | null => thumbByPost.get(post.id) ?? null,
+    [thumbByPost],
+  );
+
+  // The dock's select callback takes the row it was given; the root wants an id.
+  // Memoized so the dock and its cells keep their identity across re-renders.
+  const selectFromStrip = useCallback(
+    (post: FilmstripPost) => onSelectPostById(post.id),
+    [onSelectPostById],
+  );
 
   // Auto-open the newest post when a creator is selected but nothing's open yet
   // (e.g. right after switching creator). With no creator, the canvas stays on
   // its empty state rather than surfacing an arbitrary post.
-  // The creator_id guard matters: right after a switch, `posts` still holds the
-  // PREVIOUS creator's list until the async reload lands — auto-opening from the
+  // The creator_id guard matters: right after a switch, the index still holds the
+  // PREVIOUS creator's posts until the async reload lands — auto-opening from the
   // stale list put the old creator's post on the canvas (always one switch behind).
   useEffect(() => {
-    if (selectedCreatorId && !selectedPost && posts.length > 0 && posts[0].creator_id === selectedCreatorId) {
-      onSelectPost(posts[0]);
+    if (selectedCreatorId && !selectedPost && postIndex.length > 0 && postIndex[0].creator_id === selectedCreatorId) {
+      onSelectPostById(postIndex[0].id);
     }
-  }, [selectedCreatorId, posts, selectedPost, onSelectPost]);
+  }, [selectedCreatorId, postIndex, selectedPost, onSelectPostById]);
 
   // Keyboard: Esc exits Zen, F toggles it, ← / → flip through the creator's posts.
   useEffect(() => {
@@ -149,16 +203,16 @@ export function WorkbenchView({
         e.preventDefault(); setZen(z => !z); return;
       }
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      if (typing || posts.length === 0) return;
-      const idx = selectedPost ? posts.findIndex(p => p.id === selectedPost.id) : -1;
+      if (typing || postIndex.length === 0) return;
+      const idx = selectedPost ? postIndex.findIndex(p => p.id === selectedPost.id) : -1;
       const next = e.key === "ArrowRight"
-        ? Math.min(posts.length - 1, idx + 1)
+        ? Math.min(postIndex.length - 1, idx + 1)
         : Math.max(0, idx - 1);
-      if (next !== idx && posts[next]) { e.preventDefault(); onSelectPost(posts[next]); }
+      if (next !== idx && postIndex[next]) { e.preventDefault(); onSelectPostById(postIndex[next].id); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [posts, selectedPost, onSelectPost, zen]);
+  }, [postIndex, selectedPost, onSelectPostById, zen]);
 
   const creatorName = creators.find(c => c.id === selectedCreatorId)?.name ?? "";
 
@@ -193,7 +247,7 @@ export function WorkbenchView({
           onOpenDownloads={onOpenDownloads}
           onOpenSettings={onOpenSettings}
           onOpenNotifications={onOpenNotifications}
-          onOpenTimeline={() => setHome('timeline')}
+          onOpenTimeline={openTimeline}
           onSyncSubscriptions={onSyncSubscriptions}
           syncingSubscriptions={syncingSubscriptions}
           timelineActive={home === 'timeline'}
@@ -237,7 +291,7 @@ export function WorkbenchView({
 
               {creatorName && (
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground truncate flex-shrink-0">
-                  {creatorName}{mode === 'posts' ? ' \u00b7 ' + posts.length : ''}
+                  {creatorName}{mode === 'posts' ? ' \u00b7 ' + postIndex.length : ''}
                 </span>
               )}
 
@@ -340,12 +394,13 @@ export function WorkbenchView({
           {/* Bottom: a pure flip strip now — all shared chrome moved up top. */}
           {mode === 'posts' && selectedCreatorId && (
             <FilmstripDock
-              posts={posts}
+              posts={postIndex}
               selectedPostId={selectedPost?.id ?? null}
-              onSelect={onSelectPost}
+              onSelect={selectFromStrip}
               thumbFor={thumbFor}
+              imagesDir={imagesDir}
               title=""
-              hint={posts.length > 0 ? t.workbench.flipHint : undefined}
+              hint={postIndex.length > 0 ? t.workbench.flipHint : undefined}
               emptyText={t.workbench.noPosts}
             />
           )}

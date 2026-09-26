@@ -28,15 +28,22 @@ pub struct SyncRunView {
 pub fn start_run(app: &AppHandle, source_key: &str) -> Option<String> {
     let conn = open_db(app).ok()?;
     let now = chrono::Utc::now().to_rfc3339();
-    let _ = conn.execute(
+    // Both statements go in one transaction so the reap and the new run row land
+    // together — otherwise a crash between them could leave the source with no
+    // 'running' row at all. Tolerance is unchanged: every failure still just
+    // returns None, so a sync never breaks because its history row couldn't be
+    // written (an aborted transaction rolls back on drop).
+    let tx = conn.unchecked_transaction().ok()?;
+    let _ = tx.execute(
         "UPDATE sync_runs SET status='interrupted', finished_at=?1 WHERE status='running' AND source_key=?2",
         rusqlite::params![now, source_key],
     );
     let id = format!("{}-{:016x}", chrono::Utc::now().timestamp_millis(), fastrand::u64(..));
-    conn.execute(
+    tx.execute(
         "INSERT INTO sync_runs (id, source_key, status, started_at) VALUES (?1, ?2, 'running', ?3)",
         rusqlite::params![id, source_key, now],
     ).ok()?;
+    tx.commit().ok()?;
     Some(id)
 }
 
@@ -77,7 +84,11 @@ pub fn creator_post_count(app: &AppHandle, creator_id: &str) -> i64 {
         .unwrap_or(0)
 }
 
-#[tauri::command]
+// Every command in this file is pure DB / settings / file work with no UI or
+// window API, so each runs on the blocking threadpool instead of inline on the
+// main thread (`async` on a non-async fn = "sync_threadpool" in Tauri v2, no
+// signature change).
+#[tauri::command(async)]
 pub fn get_sync_runs(app: AppHandle, limit: Option<i64>) -> Result<Vec<SyncRunView>, String> {
     let conn = open_db(&app)?;
     let limit = limit.unwrap_or(50).clamp(1, 500);
@@ -105,7 +116,7 @@ pub fn get_sync_runs(app: AppHandle, limit: Option<i64>) -> Result<Vec<SyncRunVi
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_sync_runs(app: AppHandle) -> Result<(), String> {
     let conn = open_db(&app)?;
     conn.execute("DELETE FROM sync_runs", []).map_err(|e| e.to_string())?;
@@ -115,7 +126,7 @@ pub fn clear_sync_runs(app: AppHandle) -> Result<(), String> {
 /// Number of failed runs the user hasn't seen yet — drives the sidebar's passive
 /// error dot. "Seen" is the `last_seen_sync_runs_at` settings timestamp; a failed
 /// run started after it counts as unseen.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_unseen_failed_count(app: AppHandle) -> Result<i64, String> {
     let last_seen = {
         let state = app.state::<super::settings::AppSettingsState>();
@@ -132,7 +143,7 @@ pub fn get_unseen_failed_count(app: AppHandle) -> Result<i64, String> {
 }
 
 /// Mark all current runs as seen: stamp `last_seen_sync_runs_at` = now and persist.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mark_sync_runs_seen(app: AppHandle) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     let state = app.state::<super::settings::AppSettingsState>();

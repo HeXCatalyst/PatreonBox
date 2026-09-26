@@ -3,7 +3,7 @@ import { formatPostDate } from "../../lib/formatDate";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar, ExternalLink, Image as ImageIcon, Loader2, Star } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ImageLightbox } from "./ImageLightbox";
 import { PostComments } from "./PostComments";
@@ -65,6 +65,35 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   const assetUrl = (path: string, version?: string | null) =>
     (imagesDir ? buildAssetUrl(imagesDir, path, version) : undefined);
 
+  // P2-11: classification used to run on every render — a Map plus four filter
+  // passes and a cloned `downloadedImages` array. ImageGallery's own memos key
+  // on these identities, so rebuilding them per render invalidated everything
+  // downstream. One pass into the four mutually exclusive buckets: extension
+  // wins, with the reported mimetype as fallback — so a file whose extension we
+  // don't recognise but which declares audio/* still lands under audio rather
+  // than "other files", as it did when this was four separate predicates.
+  const publishedAt = post?.published_at ?? null;
+  const { videoAssets, imageAssets, audioAssets, fileAssets, downloadedImages } = useMemo(() => {
+    const kinds = new Map(assets.map(a => [a.id, mediaKindOfAsset(a)]));
+    const video: Asset[] = [];
+    const image: Asset[] = [];
+    const audio: Asset[] = [];
+    const file: Asset[] = [];
+    for (const a of assets) {
+      const kind = kinds.get(a.id);
+      if (kind === 'video') video.push(a);
+      else if (kind === 'image') image.push(a);
+      else if (kind === 'audio') audio.push(a);
+      else file.push(a);
+    }
+    // Carry the post's publish time onto each image so the lightbox can show
+    // when the creator originally posted it (not just when we downloaded the file).
+    const downloaded = image
+      .filter(a => a.downloaded_at !== null)
+      .map(a => ({ ...a, published_at: publishedAt }));
+    return { videoAssets: video, imageAssets: image, audioAssets: audio, fileAssets: file, downloadedImages: downloaded };
+  }, [assets, publishedAt]);
+
   if (!post) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 bg-card text-muted-foreground text-center">
@@ -95,20 +124,6 @@ export function ReadingView({ post, assets, onToggleStar }: ReadingViewProps) {
   };
 
   const safeDateString = formatPostDate(post.published_at, t.common.unknownDate);
-  // One classification pass into four mutually exclusive buckets. Extension
-  // wins, with the reported mimetype as fallback — so a file whose extension we
-  // don't recognise but which declares audio/* still lands under audio rather
-  // than "other files", as it did when this was four separate predicates.
-  const kinds = new Map(assets.map(a => [a.id, mediaKindOfAsset(a)]));
-  const videoAssets = assets.filter(a => kinds.get(a.id) === 'video');
-  const imageAssets = assets.filter(a => kinds.get(a.id) === 'image');
-  const audioAssets = assets.filter(a => kinds.get(a.id) === 'audio');
-  const fileAssets  = assets.filter(a => kinds.get(a.id) == null);
-  // Carry the post's publish time onto each image so the lightbox can show when
-  // the creator originally posted it (not just when we downloaded the file).
-  const downloadedImages = imageAssets
-    .filter(a => a.downloaded_at !== null)
-    .map(a => ({ ...a, published_at: post.published_at }));
 
   return (
     <div className="flex-1 flex flex-col h-full bg-card overflow-hidden relative reading-glow">

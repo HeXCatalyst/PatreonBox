@@ -13,6 +13,7 @@ fn default_debug_output_mode() -> String { "none".to_string() }
 fn default_migration_verify_mode() -> String { "size".to_string() }
 fn default_download_concurrency() -> u32 { 3 }
 fn default_download_retries() -> u32 { 2 }
+fn default_comment_fetch_concurrency() -> u32 { 1 }
 fn default_delete_mode() -> String { "trash".to_string() }
 fn default_layout_mode() -> String { "workbench".to_string() }
 fn default_color_theme() -> String { "nightwolf".to_string() }
@@ -79,6 +80,12 @@ pub struct AppSettings {
     // never retried automatically regardless of this value.
     #[serde(default = "default_download_retries")]
     pub download_retries: u32,
+    // How many posts the bulk comment fetch works on at once (1–10). The fetch
+    // worker pool re-reads it at the start of each bulk run, so a change applies
+    // to the next backfill without a restart. 1 keeps the original strictly
+    // sequential behaviour.
+    #[serde(default = "default_comment_fetch_concurrency")]
+    pub comment_fetch_concurrency: u32,
     #[serde(default = "default_delete_mode")]
     pub delete_mode: String,            // "trash" (move to Trash) | "direct" (permanent)
     #[serde(default)]
@@ -116,6 +123,7 @@ impl Default for AppSettings {
             demo_mode: false,
             download_concurrency: 3,
             download_retries: 2,
+            comment_fetch_concurrency: 1,
             delete_mode: "trash".to_string(),
             last_seen_sync_runs_at: String::new(),
             layout_mode: "workbench".to_string(),
@@ -155,7 +163,11 @@ fn dir_size(path: &std::path::Path) -> u64 {
         .unwrap_or(0)
 }
 
-#[tauri::command]
+// read_settings / write_settings / get_app_version touch no UI or window API —
+// they are managed-state reads, a settings.json write and a package-info read —
+// so they run on the blocking threadpool rather than inline on the main thread
+// (`async` on a non-async fn = "sync_threadpool" in Tauri v2, no signature change).
+#[tauri::command(async)]
 pub fn read_settings(app: AppHandle) -> Result<AppSettings, String> {
     let state = app.state::<AppSettingsState>();
     let settings = state.0.read().map_err(|e| e.to_string())?.clone();
@@ -240,7 +252,7 @@ pub fn scraper_windows_hidden(app: &AppHandle) -> bool {
     hidden
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), String> {
     // Reject outright while a migration holds the lock, rather than relying on
     // timing to avoid a stale-cache write landing between migrate_images_dir's
@@ -285,7 +297,7 @@ pub async fn get_storage_usage(app: AppHandle) -> Result<StorageUsage, String> {
     .map_err(|e| format!("storage usage task failed: {}", e))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
@@ -299,11 +311,17 @@ pub async fn clear_all_data(app: AppHandle) -> Result<(), String> {
     // blocking pool.
     tauri::async_runtime::spawn_blocking(move || {
         let conn = open_db(&app)?;
-        conn.execute("DELETE FROM posts", [])
+        // One transaction for all four DELETEs: a crash part-way through must not
+        // leave a half-cleared library (posts gone but assets/sync rows still
+        // there). The file work below stays OUTSIDE the transaction so SQLite's
+        // write lock is never held across filesystem I/O.
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM posts", [])
             .map_err(|e| format!("DB error: {}", e))?;
-        conn.execute("DELETE FROM assets", []).map_err(|e| format!("DB error: {}", e))?;
-        conn.execute("DELETE FROM sync_runs", []).map_err(|e| format!("DB error: {}", e))?;
-        conn.execute("DELETE FROM sync_checkpoints", []).map_err(|e| format!("DB error: {}", e))?;
+        tx.execute("DELETE FROM assets", []).map_err(|e| format!("DB error: {}", e))?;
+        tx.execute("DELETE FROM sync_runs", []).map_err(|e| format!("DB error: {}", e))?;
+        tx.execute("DELETE FROM sync_checkpoints", []).map_err(|e| format!("DB error: {}", e))?;
+        tx.commit().map_err(|e| e.to_string())?;
         let images_dir_path = super::file_ops::images_dir(&app)?;
         if images_dir_path.exists() {
             if let Err(e) = std::fs::remove_dir_all(&images_dir_path) {

@@ -62,11 +62,27 @@ fn process_tree(sys: &System) -> HashSet<Pid> {
 
 /// This app's own resource usage — the main process plus its descendant
 /// processes (the WebView/helper processes), NOT the whole system.
-#[tauri::command]
+///
+/// Moved off the main thread: refreshing every process on the machine is pure
+/// sysinfo work (no UI/window API), and it runs once a second while the perf HUD
+/// is open. The body stays synchronous, so the `SysState` mutex guard is held
+/// across no await point. (`async` on a non-async fn = "sync_threadpool" in
+/// Tauri v2, no signature change.)
+#[tauri::command(async)]
 pub fn process_stats(state: tauri::State<SysState>) -> ProcessStats {
     let mut sys = state.0.lock().unwrap_or_else(|e| e.into_inner());
     // Refresh CPU deltas + memory for every process (needed to walk the tree).
-    sys.refresh_processes(ProcessesToUpdate::All, true);
+    // Narrowed from the plain `refresh_processes`, which also re-reads the
+    // command line, environment, cwd, exe, user and disk usage of every process
+    // on the machine — once per second, all of it thrown away. `parent` is NOT
+    // behind a refresh flag in sysinfo 0.32 (`ProcessRefreshKind` has no parent
+    // field): the macOS backend fills it from `proc_bsdinfo` unconditionally in
+    // `create_new_process`/`update_process`, so `process_tree()` still works.
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::new().with_memory().with_cpu(),
+    );
 
     let tree = process_tree(&sys);
 
@@ -90,7 +106,10 @@ pub fn process_stats(state: tauri::State<SysState>) -> ProcessStats {
 /// Bytes this app's process tree has written to / read from disk since start.
 /// Powers the Downloads page's disk-write line, which is compared against
 /// network throughput to spot bytes arriving but not landing on disk.
-#[tauri::command]
+///
+/// Same main-thread reasoning as `process_stats`: pure sysinfo work, so it runs
+/// on the blocking threadpool.
+#[tauri::command(async)]
 pub fn disk_io_stats(state: tauri::State<SysState>) -> DiskIoStats {
     let mut sys = state.0.lock().unwrap_or_else(|e| e.into_inner());
     // Disk usage only. The Downloads page polls this every second for as long as

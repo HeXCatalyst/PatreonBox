@@ -2,9 +2,9 @@
  * Trailing-edge debounce: `fn` runs once, `ms` after the last call.
  *
  * Powers the post-list search input (LibraryView): without it each keystroke
- * fires a full `getPosts()` query — the ~20MB/keystroke payload flagged as P0-2
- * in the perf audit. SearchView already inlines the same pattern; this is the
- * shared, tested version.
+ * fires the posts query — the payload flagged as P0-2 in the perf audit, now one
+ * page rather than the creator's whole history. SearchView already inlines the
+ * same pattern; this is the shared, tested version.
  *
  * `cancel()` clears a pending call and is safe to call when nothing is pending.
  */

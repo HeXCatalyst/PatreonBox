@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Star, Image as ImageIcon, FileText, ArrowDownWideNarrow, ArrowUpWideNarrow } from "lucide-react";
-import { FavoriteAsset, Post } from "../../types/db";
-import { getFavoriteMedia, getPosts, toggleFavoriteAsset, type FavoriteSort } from "../../lib/db";
+import { FavoriteAsset } from "../../types/db";
+import { getFavoriteMedia, getStarredPosts, toggleFavoriteAsset, type FavoriteSort, type StarredPostRow } from "../../lib/db";
 import { ImageLightbox } from "../library/ImageLightbox";
+import { ThumbWithFallback } from "../library/ThumbWithFallback";
 import { useTranslation } from "../../lib/i18n";
-import { assetUrl, useImagesDir } from "../../lib/assetUrl";
+import { useImagesDir } from "../../lib/assetUrl";
 import { ToolbarButton } from "@/components/ui/toolbar-button";
 import { useSettings } from "../settings/SettingsContext";
 
@@ -33,7 +34,7 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
   const { settings } = useSettings();
   const [tab, setTab] = useState<"media" | "posts">("media");
   const [media, setMedia] = useState<FavoriteAsset[]>([]);
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<StarredPostRow[]>([]);
   const imagesDir = useImagesDir();
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [sort, setSort] = useState<FavoriteSort>("favorited");
@@ -64,7 +65,7 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
 
   useEffect(() => {
     if (tab !== "posts" || settings.demo_mode) return;
-    getPosts(undefined, "", true).then(setPosts).catch(console.error);
+    getStarredPosts().then(setPosts).catch(console.error);
   }, [tab, settings.demo_mode]);
 
   // Creators present in the favourites set — drives the filter dropdown.
@@ -73,8 +74,6 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
     for (const a of media) m.set(a.creator_id, a.creator_name);
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [media]);
-
-  const urlFor = (a: FavoriteAsset) => assetUrl(imagesDir, a);
 
   const unfavorite = async (a: FavoriteAsset) => {
     setMedia(prev => prev.filter(m => m.id !== a.id));   // drop it from this view
@@ -169,12 +168,11 @@ export function FavoritesView({ onClose, onOpenPost }: FavoritesViewProps) {
             <div className="p-3 grid gap-1" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${size}px, 1fr))` }}>
               {media.map((a, i) => (
                 <div key={a.id} className="relative group rounded overflow-hidden bg-muted/20" style={{ aspectRatio: "1" }}>
-                  <img
-                    src={urlFor(a) ?? undefined}
+                  <ThumbWithFallback
+                    imagesDir={imagesDir}
+                    asset={a}
                     alt={a.file_name}
                     className="w-full h-full object-cover cursor-pointer"
-                    decoding="async"
-                    draggable={false}
                     onClick={() => setLightboxIndex(i)}
                   />
                   <button

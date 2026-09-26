@@ -43,17 +43,6 @@ use sha2::{Sha256, Digest};
 use std::io::{Read, Write};
 use tauri::Emitter;
 
-fn dir_total_size(path: &Path) -> u64 {
-    if !path.exists() { return 0; }
-    std::fs::read_dir(path).ok()
-        .map(|entries| entries.filter_map(|e| e.ok())
-            .map(|e| {
-                let p = e.path();
-                if p.is_dir() { dir_total_size(&p) } else { std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) }
-            }).sum())
-        .unwrap_or(0)
-}
-
 fn hash_file(path: &Path) -> Result<String, String> {
     let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut hasher = Sha256::new();
@@ -82,25 +71,31 @@ fn copy_and_hash(src: &Path, dst: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-/// Recursively lists every regular file under `root`, as paths relative to `root`.
-fn list_files_recursive(root: &Path) -> Result<Vec<PathBuf>, String> {
-    fn walk(base: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+/// Recursively lists every regular file under `root` as paths relative to
+/// `root`, accumulating the total byte size in the same walk. Replaces the
+/// separate `dir_total_size` + `list_files_recursive` pair — two HDD
+/// traversals merged into one (P1-5).
+fn list_files_with_sizes(root: &Path) -> Result<(Vec<PathBuf>, u64), String> {
+    fn walk(base: &Path, current: &Path, out: &mut Vec<PathBuf>, total: &mut u64) -> Result<(), String> {
         for entry in std::fs::read_dir(current).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
             if path.is_dir() {
-                walk(base, &path, out)?;
+                walk(base, &path, out, total)?;
             } else {
+                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                *total += size;
                 out.push(path.strip_prefix(base).map_err(|e| e.to_string())?.to_path_buf());
             }
         }
         Ok(())
     }
     let mut out = Vec::new();
+    let mut total = 0u64;
     if root.exists() {
-        walk(root, root, &mut out)?;
+        walk(root, root, &mut out, &mut total)?;
     }
-    Ok(out)
+    Ok((out, total))
 }
 
 /// Best-effort canonicalization for a path that may not exist yet: canonicalize
@@ -169,7 +164,11 @@ pub async fn migrate_images_dir(app: AppHandle, target_dir: Option<String>) -> R
         std::fs::create_dir_all(&target).map_err(|e| format!("Cannot create target directory: {}", e))?;
     }
 
-    let total_bytes = dir_total_size(&source);
+    // List files and accumulate total size in one walk (previously two separate
+    // recursive walks — dir_total_size + list_files_recursive — each traversing
+    // the entire tree). Done before the lock: it's read-only, and no concurrent
+    // migration can be running (the lock acquisition below would fail if one were).
+    let (files, total_bytes) = list_files_with_sizes(&source)?;
 
     let available = fs4::available_space(&target)
         .map_err(|e| format!("Cannot check free disk space: {}", e))?;
@@ -190,9 +189,6 @@ pub async fn migrate_images_dir(app: AppHandle, target_dir: Option<String>) -> R
         guard.migration_verify_mode.clone()
     };
 
-    let files = list_files_recursive(&source)?;
-    let mut copied_bytes: u64 = 0;
-    let mut files_copied: usize = 0;
     let phase = if verify_mode == "hash" { "verifying" } else { "copying" };
 
     // Record this migration attempt in the history table (best-effort — a missing
@@ -208,113 +204,140 @@ pub async fn migrate_images_dir(app: AppHandle, target_dir: Option<String>) -> R
         &verify_mode,
     );
 
-    for (idx, rel) in files.iter().enumerate() {
-        let src_path = source.join(rel);
-        let dst_path = target.join(rel);
+    // The copy loop is pure synchronous I/O (std::fs copy/hash). Running it
+    // inline in this async fn blocks a tokio worker for the entire duration —
+    // GB-scale copies can take minutes. spawn_blocking moves it to the
+    // blocking-thread pool so the async runtime stays responsive (P1-5).
+    let app2 = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut copied_bytes: u64 = 0;
+        let mut files_copied: usize = 0;
+        let mut last_emit = std::time::Instant::now();
+        let emit_interval = std::time::Duration::from_millis(100);
+        let pct_step = (total_bytes / 100).max(1);
+        let mut last_pct = 0u64;
 
-        // Every fallible per-file operation is routed through this closure so
-        // that *any* error — mkdir, metadata read, copy, hash, or size/hash
-        // mismatch — hits the single rollback branch below, instead of some
-        // of them bypassing it via an early `?` return out of the whole
-        // function (which would leave a half-copied, no-longer-empty
-        // `target` on disk with nothing cleaned up).
-        let file_result: Result<u64, String> = (|| {
-            if let Some(parent) = dst_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let src_len = std::fs::metadata(&src_path).map_err(|e| e.to_string())?.len();
+        for (idx, rel) in files.iter().enumerate() {
+            let src_path = source.join(rel);
+            let dst_path = target.join(rel);
 
-            if verify_mode == "hash" {
-                let src_hash = copy_and_hash(&src_path, &dst_path)?;
-                let dst_hash = hash_file(&dst_path)?;
-                if dst_hash != src_hash {
-                    return Err(format!("Hash mismatch after copying {}", rel.display()));
+            // Every fallible per-file operation is routed through this closure so
+            // that *any* error — mkdir, metadata read, copy, hash, or size/hash
+            // mismatch — hits the single rollback branch below, instead of some
+            // of them bypassing it via an early `?` return out of the whole
+            // function (which would leave a half-copied, no-longer-empty
+            // `target` on disk with nothing cleaned up).
+            let file_result: Result<u64, String> = (|| {
+                if let Some(parent) = dst_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-            } else {
-                let copied_len = std::fs::copy(&src_path, &dst_path)
-                    .map_err(|e| format!("Failed to copy {}: {}", rel.display(), e))?;
-                if copied_len != src_len {
-                    return Err(format!("Size mismatch after copying {}", rel.display()));
-                }
-            }
-            Ok(src_len)
-        })();
+                let src_len = std::fs::metadata(&src_path).map_err(|e| e.to_string())?.len();
 
-        let src_len = match file_result {
-            Ok(len) => len,
-            Err(msg) => {
-                // Record the failure before rolling back, so the history shows
-                // how far the copy got and why it aborted.
+                if verify_mode == "hash" {
+                    let src_hash = copy_and_hash(&src_path, &dst_path)?;
+                    let dst_hash = hash_file(&dst_path)?;
+                    if dst_hash != src_hash {
+                        return Err(format!("Hash mismatch after copying {}", rel.display()));
+                    }
+                } else {
+                    let copied_len = std::fs::copy(&src_path, &dst_path)
+                        .map_err(|e| format!("Failed to copy {}: {}", rel.display(), e))?;
+                    if copied_len != src_len {
+                        return Err(format!("Size mismatch after copying {}", rel.display()));
+                    }
+                }
+                Ok(src_len)
+            })();
+
+            let src_len = match file_result {
+                Ok(len) => len,
+                Err(msg) => {
+                    // Record the failure before rolling back, so the history shows
+                    // how far the copy got and why it aborted.
+                    super::migration_history::record_migration_finish(
+                        &app2, &record_id, "failed",
+                        files_copied, total_bytes, copied_bytes, Some(&msg),
+                    );
+                    let _ = std::fs::remove_dir_all(&target);
+                    return Err(msg);
+                }
+            };
+
+            copied_bytes += src_len;
+            files_copied = idx + 1;
+
+            // Throttle progress emit to ≥100ms or ≥1% — previously emitted per
+            // file (thousands of IPC events on a GB-scale copy, each waking the
+            // frontend's event handler). DB progress is still persisted every 50
+            // files for crash recovery.
+            if files_copied % 50 == 0 {
+                super::migration_history::record_migration_progress(&app2, &record_id, copied_bytes);
+            }
+            let now = std::time::Instant::now();
+            let pct = copied_bytes / pct_step;
+            if now.duration_since(last_emit) >= emit_interval || pct > last_pct {
+                last_emit = now;
+                last_pct = pct;
+                let _ = app2.emit("image-migration-progress", serde_json::json!({
+                    "current_bytes": copied_bytes,
+                    "total_bytes": total_bytes,
+                    "phase": phase
+                }));
+            }
+        }
+
+        // --- Success: persist the new setting FIRST, then delete originals ---
+        // Order matters: writing settings.json before deleting the source guarantees
+        // the app never points at a deleted directory. If the settings write fails,
+        // source is intact and settings unchanged — clean up the target copies so a
+        // retry doesn't hit "target must be empty", and return the error. If the
+        // settings write succeeds but source deletion fails, settings already
+        // points at the new (populated) directory and the leftover source is a
+        // harmless orphan — log it, don't fail the migration.
+        {
+            let settings_state = app2.state::<super::settings::AppSettingsState>();
+            let mut settings = settings_state.0.write().map_err(|e| e.to_string())?;
+            settings.custom_images_dir = if is_restore_to_default { None } else { Some(target_dir.clone()) };
+            let json = serde_json::to_string_pretty(&*settings).map_err(|e| e.to_string())?;
+            let path = app2.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+            if let Err(e) = std::fs::write(&path, json) {
+                let err_msg = format!("Failed to persist new images directory: {}", e);
                 super::migration_history::record_migration_finish(
-                    &app, &record_id, "failed",
-                    files_copied, total_bytes, copied_bytes, Some(&msg),
+                    &app2, &record_id, "failed",
+                    files_copied, total_bytes, copied_bytes, Some(&err_msg),
                 );
+                // Source untouched, settings unchanged. Clean up target copies so a
+                // retry starts fresh.
                 let _ = std::fs::remove_dir_all(&target);
-                return Err(msg);
+                return Err(err_msg);
             }
-        };
-
-        copied_bytes += src_len;
-        files_copied = idx + 1;
-        // Persist progress every ~50 files so a crash mid-copy leaves a record
-        // showing how far it got, without hammering the DB on every file.
-        if files_copied % 50 == 0 {
-            super::migration_history::record_migration_progress(&app, &record_id, copied_bytes);
         }
-        let _ = app.emit("image-migration-progress", serde_json::json!({
-            "current_bytes": copied_bytes,
+
+        // Settings persisted — the migration's primary goal (relocate the active
+        // images directory) is complete. Removing the old source is secondary; a
+        // failure here is logged but not surfaced as a migration failure, since
+        // settings already point at the new, populated directory.
+        if source.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&source) {
+                eprintln!("WARN: Migration succeeded but could not remove old images dir: {}", e);
+            }
+        }
+
+        super::migration_history::record_migration_finish(
+            &app2, &record_id, "success",
+            files_copied, total_bytes, copied_bytes, None,
+        );
+
+        let _ = app2.emit("image-migration-progress", serde_json::json!({
+            "current_bytes": total_bytes,
             "total_bytes": total_bytes,
-            "phase": phase
+            "phase": "done"
         }));
-    }
 
-    // --- Success: persist the new setting FIRST, then delete originals ---
-    // Order matters: writing settings.json before deleting the source guarantees
-    // the app never points at a deleted directory. If the settings write fails,
-    // source is intact and settings unchanged — clean up the target copies so a
-    // retry doesn't hit "target must be empty", and return the error. If the
-    // settings write succeeds but source deletion fails, settings already
-    // points at the new (populated) directory and the leftover source is a
-    // harmless orphan — log it, don't fail the migration.
-    {
-        let settings_state = app.state::<super::settings::AppSettingsState>();
-        let mut settings = settings_state.0.write().map_err(|e| e.to_string())?;
-        settings.custom_images_dir = if is_restore_to_default { None } else { Some(target_dir.clone()) };
-        let json = serde_json::to_string_pretty(&*settings).map_err(|e| e.to_string())?;
-        let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
-        if let Err(e) = std::fs::write(&path, json) {
-            let err_msg = format!("Failed to persist new images directory: {}", e);
-            super::migration_history::record_migration_finish(
-                &app, &record_id, "failed",
-                files_copied, total_bytes, copied_bytes, Some(&err_msg),
-            );
-            // Source untouched, settings unchanged. Clean up target copies so a
-            // retry starts fresh.
-            let _ = std::fs::remove_dir_all(&target);
-            return Err(err_msg);
-        }
-    }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("migration task panicked: {}", e))?;
 
-    // Settings persisted — the migration's primary goal (relocate the active
-    // images directory) is complete. Removing the old source is secondary; a
-    // failure here is logged but not surfaced as a migration failure, since
-    // settings already point at the new, populated directory.
-    if source.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&source) {
-            eprintln!("WARN: Migration succeeded but could not remove old images dir: {}", e);
-        }
-    }
-
-    super::migration_history::record_migration_finish(
-        &app, &record_id, "success",
-        files_copied, total_bytes, copied_bytes, None,
-    );
-
-    let _ = app.emit("image-migration-progress", serde_json::json!({
-        "current_bytes": total_bytes,
-        "total_bytes": total_bytes,
-        "phase": "done"
-    }));
-
-    Ok(())
+    result
 }

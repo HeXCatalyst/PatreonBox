@@ -4861,6 +4861,7 @@ dependencies = [
  "image",
  "libc",
  "objc2",
+ "rayon",
  "reqwest",
  "rusqlite",
  "serde",
