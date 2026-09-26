@@ -1,4 +1,5 @@
 import Database from '@tauri-apps/plugin-sql';
+import { invoke } from '@tauri-apps/api/core';
 import { Creator, Post, Asset, Comment, FavoriteAsset } from '../types/db';
 import { mediaKindOf, ALL_MEDIA_KINDS, type MediaKind } from './media';
 import { ensurePostsColumns } from './schemaHeal';
@@ -151,23 +152,96 @@ export interface PostsFilterOptions {
 }
 
 /**
- * Whether `posts_fts` exists yet. Availability is a property of the *database*,
- * not of this session: the index is built lazily by the first SearchView search
- * (`ensure_search_index`), so a list search that runs before that has to use
- * LIKE. Only the positive answer is cached — while the table is missing we
- * re-check (a `sqlite_master` lookup is microseconds), so list search upgrades
- * to FTS by itself once SearchView has paid for the index. Nothing here builds
- * the index: that costs a full backfill, and a list keystroke must not trigger it.
+ * Whether the `posts_fts` index is safe to drive a list search. The criteria
+ * mirror the backend's ensure_search_index fast path exactly (search.rs:
+ * posts_fts_exists + fts_is_external_content + fts_triggers_current): the
+ * posts_fts table exists in external-content mode (`content='posts'` in its
+ * DDL) AND all three maintenance triggers (ai/ad/au) exist in their current
+ * form — the delete/update triggers carrying the FTS5 'delete' command, the
+ * update trigger guarded by a WHEN clause. Any other shape means MATCH can
+ * silently miss freshly inserted posts or serve stale hits without raising
+ * (the catch-fallback in resolvePostsFilter never fires), so the list must
+ * walk LIKE.
+ *
+ * Three states, three behaviours:
+ * - current → MATCH (inserts, deletes and updates all maintain the index);
+ * - the index EXISTS but is not current — a trigger missing or old-form, or
+ *   the table not in external-content mode (an upgrade that never finished,
+ *   e.g. held by a write lock until busy_timeout gave up): LIKE here, plus
+ *   one deduplicated background repair (`refresh_search_index`). false is
+ *   not cached — the next list search re-probes and upgrades to FTS by
+ *   itself once the repair lands;
+ * - no posts_fts table at all: the index was never built. It stays lazily
+ *   created by the first SearchView search (`ensure_search_index`) — a list
+ *   keystroke must never pay for the full backfill, so nothing is invoked.
+ *
+ * The backend remains the authority for repairs (ensure/refresh_search_index
+ * decide and apply them); this gate is only the read-side safety net that
+ * picks MATCH vs LIKE for the list. Only the positive answer is cached —
+ * while the gate reads closed we re-check (the combined sqlite_master lookup
+ * below is one round trip, microseconds). Nothing here builds the index.
  */
 let ftsIndexAvailable = false;
 
 async function hasFtsIndex(db: Database): Promise<boolean> {
   if (ftsIndexAvailable) return true;
-  const rows = await db.select<{ name: string }[]>(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'posts_fts'",
+  // One round trip: the posts_fts table DDL plus all three trigger DDLs.
+  const rows = await db.select<{ name: string; sql: string | null }[]>(
+    "SELECT name, sql FROM sqlite_master WHERE (type = 'table' AND name = 'posts_fts') OR (type = 'trigger' AND name IN ('posts_fts_ai', 'posts_fts_ad', 'posts_fts_au'))",
   );
-  ftsIndexAvailable = rows.length > 0;
+  // Judgement identical to the backend's: table exists with content='posts'
+  // (fts_is_external_content) + all three triggers present + 'delete'
+  // command in ad/au + WHEN guard in au (fts_triggers_current). Checking all
+  // three triggers — not just the update one — is the point: a missing insert
+  // or delete trigger leaves MATCH silently wrong in ways a single-trigger
+  // probe cannot see.
+  const table = rows.find(r => r.name === "posts_fts");
+  const trigger = (name: string) => rows.find(r => r.name === name)?.sql ?? null;
+  let current = false;
+  if (table?.sql != null) {
+    const externalContent = table.sql.toLowerCase().includes("content='posts'");
+    const ai = trigger("posts_fts_ai");
+    const ad = trigger("posts_fts_ad");
+    const au = trigger("posts_fts_au");
+    if (externalContent && ai != null && ad != null && au != null) {
+      const adSql = ad.toLowerCase();
+      const auSql = au.toLowerCase();
+      current = adSql.includes("'delete'") && auSql.includes("'delete'") && auSql.includes("when");
+    }
+  }
+  ftsIndexAvailable = current;
+  if (!current && table != null) {
+    // Index exists but is incomplete/stale (missing or old-form trigger, wrong
+    // table mode): fire one background repair (idempotent, deduplicated,
+    // best-effort). false is not cached, so the next list search re-probes
+    // and picks the repaired state up.
+    void refreshSearchIndex();
+  }
+  // table == null: the index was never built — keep lazy creation (the first
+  // global search builds it); a list keystroke never triggers a backfill.
   return ftsIndexAvailable;
+}
+
+/**
+ * Ask the backend to bring the FTS index and its triggers up to the current
+ * shape (`refresh_search_index` is an idempotent ensure — already current
+ * costs a cheap no-op). Deduplicated while one call is in flight; failures are
+ * swallowed and simply retried by the next gate probe that still reads false.
+ */
+let refreshInFlight: Promise<void> | null = null;
+
+async function refreshSearchIndex(): Promise<void> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      await invoke("refresh_search_index");
+    } catch {
+      // best-effort: a failure retries naturally on the next false probe
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
 }
 
 /**

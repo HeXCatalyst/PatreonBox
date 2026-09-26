@@ -292,6 +292,20 @@ pub fn run() {
             // fresh DB there are no orphaned records anyway.
             commands::migration_history::cleanup_orphan_runs(app.handle());
 
+            // Upgrade the FTS search index to the current trigger form if an older
+            // version is present (one-time rebuild; a no-op — six sqlite_master
+            // reads — once current). Fresh DBs are skipped: the index is created lazily
+            // on the first search. Best-effort: on failure, search falls back to LIKE
+            // and the frontend can repair the index via refresh_search_index.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = commands::search::upgrade_search_index_if_present(&handle) {
+                        eprintln!("[search] startup index upgrade failed (will retry on next search): {e}");
+                    }
+                });
+            }
+
             if needs_thumb_backfill {
                 // Mark the flag set NOW (task STARTED), not when it finishes — a
                 // crash mid-backfill re-runs on next launch, which is safe
@@ -388,6 +402,7 @@ pub fn run() {
             commands::sync_history::mark_sync_runs_seen,
             commands::search::search_posts,
             commands::search::rebuild_search_index,
+            commands::search::refresh_search_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
