@@ -382,33 +382,54 @@ pub async fn fetch_comments_for_posts(app: AppHandle, post_ids: Vec<String>) -> 
     }
 
     let ids_js = serde_json::to_string(&ids).map_err(|e| e.to_string())?;
+    // Read the live concurrency setting each run (clamped the same 1..=10 the
+    // settings UI enforces), so a change applies to the next backfill without a
+    // restart — same pattern as read_download_settings in download_manager.
+    let concurrency: usize = {
+        let state = app.state::<super::settings::AppSettingsState>();
+        let s = state.0.read().unwrap_or_else(|e| e.into_inner());
+        s.comment_fetch_concurrency.clamp(1, 10) as usize
+    };
     // Paced to stay under Patreon's rate limiting; a backfill is a background
     // chore, so it's better to be slow than to get throttled into failures.
+    // `concurrency` posts are in flight at once (1 = the original strictly
+    // sequential walk); each worker keeps the 350ms pause between the posts it
+    // picks up, so raising the count raises the request rate accordingly.
     let init_script = format!(
         r#"
         window.addEventListener('DOMContentLoaded', async () => {{
             const IDS = {ids_js};
+            const WORKERS = {concurrency};
             const FIELDS = 'include=commenter,parent,first_reply.commenter,first_reply.parent'
                 + '&fields[comment]=body,created,reply_count,parent&fields[user]=full_name,image_url,url'
                 + '&page[count]=50&sort=-created&json-api-version=1.0';
-            for (const id of IDS) {{
-                const pages = [];
-                try {{
-                    let url = 'https://www.patreon.com/api/posts/' + id + '/comments2?' + FIELDS;
-                    for (let i = 0; i < 20 && url; i++) {{
-                        const resp = await fetch(url, {{ credentials: 'include', headers: {{ 'Accept': 'application/json' }} }});
-                        if (!resp.ok) break;
-                        const json = await resp.json();
-                        pages.push(json);
-                        url = json && json.links && json.links.next;
-                    }}
-                }} catch (e) {{ /* skip this post, keep going */ }}
-                try {{
-                    await window.__TAURI_INTERNALS__.invoke('report_bulk_comments',
-                        {{ postId: id, pages: pages, done: false }});
-                }} catch (e) {{}}
-                await new Promise(r => setTimeout(r, 350));
-            }}
+            let next = 0;
+            const worker = async () => {{
+                for (;;) {{
+                    const i = next++;
+                    if (i >= IDS.length) return;
+                    const id = IDS[i];
+                    const pages = [];
+                    try {{
+                        let url = 'https://www.patreon.com/api/posts/' + id + '/comments2?' + FIELDS;
+                        for (let p = 0; p < 20 && url; p++) {{
+                            const resp = await fetch(url, {{ credentials: 'include', headers: {{ 'Accept': 'application/json' }} }});
+                            if (!resp.ok) break;
+                            const json = await resp.json();
+                            pages.push(json);
+                            url = json && json.links && json.links.next;
+                        }}
+                    }} catch (e) {{ /* skip this post, keep going */ }}
+                    try {{
+                        await window.__TAURI_INTERNALS__.invoke('report_bulk_comments',
+                            {{ postId: id, pages: pages, done: false }});
+                    }} catch (e) {{}}
+                    // Anti-throttle pacing, per worker: pause between the posts
+                    // this worker picks up (unchanged from the sequential walk).
+                    await new Promise(r => setTimeout(r, 350));
+                }}
+            }};
+            await Promise.all(Array.from({{ length: WORKERS }}, worker));
             try {{
                 await window.__TAURI_INTERNALS__.invoke('report_bulk_comments',
                     {{ postId: '', pages: [], done: true }});

@@ -412,6 +412,8 @@ export interface Translations {
     timeoutDesc: string;
     concurrencyLabel: string;
     concurrencyDesc: string;
+    commentConcurrencyLabel: string;
+    commentConcurrencyDesc: string;
     retriesLabel: string;
     retriesDesc: string;
     delayLabel: string;
@@ -888,6 +890,8 @@ const zh: Translations = {
     timeoutDesc: '单张图片下载的最大等待时间，修改后下次启动 app 生效',
     concurrencyLabel: '同时下载数',
     concurrencyDesc: '同时下载的文件数（1–10）。调高更快，但更容易被 Patreon 限流导致失败。立即生效',
+    commentConcurrencyLabel: '评论抓取并发数',
+    commentConcurrencyDesc: '批量抓取评论时同时处理的帖子数（1–10）。调高更快，但更容易触发 Patreon 限流；每个并发仍保留帖间 350ms 停顿。下次抓取生效',
     retriesLabel: '失败重试次数',
     retriesDesc: '网络等临时性失败的自动重试次数。链接失效等永久性失败不会重试',
     delayLabel: '图片下载延迟',
@@ -1364,6 +1368,8 @@ const en: Translations = {
     timeoutDesc: 'Max wait time per image download, applied next app launch',
     concurrencyLabel: 'Simultaneous downloads',
     concurrencyDesc: 'How many files download at once (1–10). Higher is faster but more likely to hit Patreon rate limits and fail. Takes effect immediately',
+    commentConcurrencyLabel: 'Comment fetch concurrency',
+    commentConcurrencyDesc: 'How many posts the bulk comment fetch works on at once (1–10). Higher is faster but more likely to hit Patreon rate limits; each worker still keeps the 350ms pause between posts. Applies to the next fetch',
     retriesLabel: 'Retries on failure',
     retriesDesc: 'Automatic retries for temporary failures like network errors. Permanent failures such as expired links are not retried',
     delayLabel: 'Image Download Delay',

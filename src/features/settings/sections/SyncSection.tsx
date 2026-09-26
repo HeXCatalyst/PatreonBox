@@ -44,6 +44,14 @@ export function SyncSection() {
     if (!isNaN(val)) updateSettings({ download_retries: Math.min(10, Math.max(0, val)) });
   };
 
+  // Clamped to the same 1..=10 the bulk comment fetch enforces on the backend,
+  // so the field can't show a value the worker pool won't honour. The setting
+  // is re-read at the start of each bulk fetch — no restart needed.
+  const commitCommentConcurrency = (raw: string) => {
+    const val = parseInt(raw);
+    if (!isNaN(val)) updateSettings({ comment_fetch_concurrency: Math.min(10, Math.max(1, val)) });
+  };
+
   const commitDelay = (raw: string) => {
     const val = parseInt(raw);
     if (!isNaN(val)) updateSettings({ image_download_delay_ms: Math.min(5000, Math.max(50, val)) });
@@ -127,6 +135,21 @@ export function SyncSection() {
           defaultValue={settings.download_retries}
           onBlur={e => commitRetries(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && commitRetries((e.target as HTMLInputElement).value)}
+          className="h-8 w-20 text-sm px-2 border rounded bg-background text-center"
+        />
+      </SettingRow>
+
+      <SettingRow
+        label={t.settingsSync.commentConcurrencyLabel}
+        description={t.settingsSync.commentConcurrencyDesc}
+      >
+        <input
+          type="number"
+          min={1}
+          max={10}
+          defaultValue={settings.comment_fetch_concurrency}
+          onBlur={e => commitCommentConcurrency(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && commitCommentConcurrency((e.target as HTMLInputElement).value)}
           className="h-8 w-20 text-sm px-2 border rounded bg-background text-center"
         />
       </SettingRow>

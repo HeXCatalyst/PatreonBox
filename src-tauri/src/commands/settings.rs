@@ -13,6 +13,7 @@ fn default_debug_output_mode() -> String { "none".to_string() }
 fn default_migration_verify_mode() -> String { "size".to_string() }
 fn default_download_concurrency() -> u32 { 3 }
 fn default_download_retries() -> u32 { 2 }
+fn default_comment_fetch_concurrency() -> u32 { 1 }
 fn default_delete_mode() -> String { "trash".to_string() }
 fn default_layout_mode() -> String { "workbench".to_string() }
 fn default_color_theme() -> String { "nightwolf".to_string() }
@@ -79,6 +80,12 @@ pub struct AppSettings {
     // never retried automatically regardless of this value.
     #[serde(default = "default_download_retries")]
     pub download_retries: u32,
+    // How many posts the bulk comment fetch works on at once (1–10). The fetch
+    // worker pool re-reads it at the start of each bulk run, so a change applies
+    // to the next backfill without a restart. 1 keeps the original strictly
+    // sequential behaviour.
+    #[serde(default = "default_comment_fetch_concurrency")]
+    pub comment_fetch_concurrency: u32,
     #[serde(default = "default_delete_mode")]
     pub delete_mode: String,            // "trash" (move to Trash) | "direct" (permanent)
     #[serde(default)]
@@ -116,6 +123,7 @@ impl Default for AppSettings {
             demo_mode: false,
             download_concurrency: 3,
             download_retries: 2,
+            comment_fetch_concurrency: 1,
             delete_mode: "trash".to_string(),
             last_seen_sync_runs_at: String::new(),
             layout_mode: "workbench".to_string(),
