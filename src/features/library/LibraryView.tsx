@@ -42,6 +42,7 @@ import type { NotifyAction } from "../notifications/store";
 import { ResizeDivider } from "./ResizeDivider";
 import type { DatePreset } from "./FilterPanel";
 import { CommentBackfillBanner } from "./CommentBackfillBanner";
+import { createCommentBackfillQueue, runPostSyncTasks } from "./syncTasks";
 import {
   beginSyncProgress,
   clearCommentBackfillProgress,
@@ -432,6 +433,12 @@ export function LibraryView() {
   // (a live switch still only reaches them on the next launch).
   const t = translations[initialSettings.language ?? 'zh'];
   const [syncingPosts, setSyncingPosts] = useState(false);
+  const postSyncInFlightRef = useRef(false);
+  const [commentBackfills] = useState(() => createCommentBackfillQueue({
+    fetch: postIds => invoke<number>('fetch_comments_for_posts', { postIds }),
+    start: total => setCommentBackfillProgress(0, total),
+    finish: clearCommentBackfillProgress,
+  }));
   const [syncingCreatorId, setSyncingCreatorId] = useState<string | null>(null);
   const [syncingSubscriptions, setSyncingSubscriptions] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
@@ -759,29 +766,22 @@ export function LibraryView() {
     }
   };
 
-  // Fresh sync and resume-from-checkpoint are the same run with three
-  // differences, so they share one body: resume seeds progress from the
-  // checkpoint, and takes its mode + cursor from it instead of the current UI
-  // state. A fresh sync also forwards the incremental toggle, which resume
-  // deliberately doesn't — resuming continues an existing crawl, where flipping
-  // incremental mid-stream has no meaning.
   /**
    * Fetch comments for a creator's posts in one batched pass.
    *
-   * `onlyMissing` is what a post-sync uses: it skips posts already cached, so
+   * `onlyMissing` is what a post-sync uses: it skips successful fetches (even
+   * zero-comment results) and legacy non-empty caches, so
    * the cost is proportional to what the sync actually brought in rather than
-   * to the whole archive. Passing false re-fetches everything, which is what the
-   * manual "backfill all" action wants.
+   * to the whole archive. Passing false re-fetches everything for this creator.
    *
    * Best-effort — a comment failure must not fail the sync that triggered it.
    */
   const backfillComments = async (creatorId: string, onlyMissing: boolean) => {
     if (demoMode) return;
     try {
-      const ids = await getPostIdsForComments(creatorId, onlyMissing);
-      if (ids.length === 0) return;
-      setCommentBackfillProgress(0, ids.length);
-      await invoke<number>('fetch_comments_for_posts', { postIds: ids });
+      await commentBackfills.enqueue(() => demoModeRef.current
+        ? Promise.resolve([])
+        : getPostIdsForComments(creatorId, onlyMissing));
     } catch (e) {
       console.error('Comment backfill failed:', e);
       notify({
@@ -791,8 +791,6 @@ export function LibraryView() {
         source: creators.find(c => c.id === creatorId)?.name,
         dedupeKey: `comment-fetch:${creatorId}`,
       });
-    } finally {
-      clearCommentBackfillProgress();
     }
   };
 
@@ -805,15 +803,15 @@ export function LibraryView() {
   const backfillAllComments = async () => {
     if (demoMode) return;
     try {
-      const ids = await getAllPostIdsMissingComments();
-      if (ids.length === 0) return;
-      setCommentBackfillProgress(0, ids.length);
-      await invoke<number>('fetch_comments_for_posts', { postIds: ids });
+      const result = await commentBackfills.enqueue(() => demoModeRef.current
+        ? Promise.resolve([])
+        : getAllPostIdsMissingComments());
+      if (result.posts === 0) return;
       // This one runs for tens of minutes with nobody watching, so its result
       // is worth a notification even when it succeeds.
       notify({
         severity: 'success',
-        title: t.notifications.commentFetchDone(ids.length),
+        title: t.notifications.commentFetchDone(result.posts),
         dedupeKey: 'comment-backfill-all',
       });
     } catch (e) {
@@ -825,44 +823,44 @@ export function LibraryView() {
         dedupeKey: 'comment-backfill-all',
       });
     } finally {
-      clearCommentBackfillProgress();
       // Reflect newly-cached comments in whatever post is open.
       if (selectedPost) loadAssets(selectedPost.id);
     }
   };
 
+  // Resume keeps the checkpoint's progress, mode and cursor. Only a fresh
+  // sync reads the UI's incremental toggle.
   const runSyncPosts = async (checkpoint: SyncCheckpoint | null) => {
-    if (demoMode || !selectedCreatorId || syncingPosts) return;
+    if (demoMode || !selectedCreatorId || postSyncInFlightRef.current) return;
     const creator = creators.find(c => c.id === selectedCreatorId);
     if (!creator?.profile_url) return;
 
+    postSyncInFlightRef.current = true;
     setSyncingPosts(true);
     setSyncingCreatorId(selectedCreatorId);
     beginSyncProgress(checkpoint ? checkpoint.posts_done : 0);
     try {
-      await invoke<number>('scrape_creator_posts', {
-        creatorUrl: creator.profile_url,
-        creatorId: creator.id,
-        maxPosts: maxPosts,
-        mode: checkpoint ? checkpoint.mode : syncMode,
-        resumeCursor: checkpoint ? checkpoint.cursor : null,
-        // Only a fresh sync carries the toggle; resume leaves it unset (false).
-        ...(checkpoint ? {} : { incremental: incrementalSync }),
+      await runPostSyncTasks({
+        scrape: () => invoke<number>('scrape_creator_posts', {
+          creatorUrl: creator.profile_url,
+          creatorId: creator.id,
+          maxPosts: maxPosts,
+          mode: checkpoint ? checkpoint.mode : syncMode,
+          resumeCursor: checkpoint ? checkpoint.cursor : null,
+          // Only a fresh sync carries the toggle; resume leaves it unset (false).
+          ...(checkpoint ? {} : { incremental: incrementalSync }),
+        }),
+        refresh: async () => {
+          // Refresh both the classic list and the workbench's filmstrip index.
+          setReloadToken(n => n + 1);
+          await loadCreators();
+        },
+        backfill: () => backfillComments(creator.id, true),
+        // backfillComments displays its own warning; guard unexpected failures too.
+        onBackfillError: e => console.error('Comment backfill failed:', e),
+        // Resume must use the checkpoint's mode, just like the scraper above.
+        download: (checkpoint?.mode ?? syncMode) === 'full' ? () => handleSyncImages() : undefined,
       });
-      // Refresh both layouts off the token: the classic list reloads its page and
-      // the workbench its filmstrip index (which is no longer a prop).
-      setReloadToken(n => n + 1);
-      await loadCreators();
-      // Pull comments for the posts this sync brought in. Only the ones with no
-      // cached comments, so a repeat sync doesn't refetch the whole archive; the
-      // comments panel's Refresh button still forces a single post.
-      await backfillComments(creator.id, true);
-      // Full mode: always auto-trigger images after sync batch completes.
-      // Don't gate on checkpoint: with small maxPosts a checkpoint always exists, but
-      // user still expects the current batch's images to download automatically.
-      if (syncMode === 'full') {
-        await handleSyncImages();
-      }
     } catch (e) {
       console.error(checkpoint ? 'Failed to resume posts:' : 'Failed to sync posts:', e);
       notify({
@@ -874,6 +872,7 @@ export function LibraryView() {
         action: { kind: 'open-creator', payload: { creatorId: creator.id } },
       });
     } finally {
+      postSyncInFlightRef.current = false;
       setSyncingPosts(false);
       setSyncingCreatorId(null);
       endSyncProgress();

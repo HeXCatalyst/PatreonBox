@@ -614,7 +614,7 @@ const zh: Translations = {
   comments: {
     heading: (n) => `评论 (${n})`,
     refresh: '刷新',
-    backfillProgress: (done, total) => `正在抓取评论 ${done}/${total}`,
+    backfillProgress: (done, total) => `正在抓取帖子评论 ${done}/${total} 篇`,
     loading: '加载评论中…',
     empty: '暂无评论',
     notLoaded: '点击刷新加载评论',
@@ -1090,7 +1090,7 @@ const en: Translations = {
   comments: {
     heading: (n) => `Comments (${n})`,
     refresh: 'Refresh',
-    backfillProgress: (done, total) => `Fetching comments ${done}/${total}`,
+    backfillProgress: (done, total) => `Fetching comments for posts ${done}/${total}`,
     loading: 'Loading comments…',
     empty: 'No comments yet',
     notLoaded: 'Click Refresh to load comments',

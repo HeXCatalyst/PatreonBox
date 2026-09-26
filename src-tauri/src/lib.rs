@@ -229,6 +229,12 @@ pub fn run() {
                   ON sync_runs(status, started_at);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 16,
+            description: "add_comment_fetch_state",
+            sql: include_str!("../migrations/00016_comment_fetch_state.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
